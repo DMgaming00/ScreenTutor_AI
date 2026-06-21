@@ -8,6 +8,11 @@ export {};
 declare global {
   interface ElectronAPI {
     captureScreen: () => Promise<any>;
+    startRegionSelect: () => Promise<{ ok: boolean; reason?: string }>;
+    cancelRegionSelect: () => void;
+    confirmRegionSelect: (rect: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; reason?: string }>;
+    onRegionSelectStart: (callback: () => void) => void;
+    onRegionSelectCancel: (callback: () => void) => void;
     sendDrawings: (drawings: any[]) => void;
     clearOverlay: () => void;
     restoreExplanation: (payload: import('./types/explanation').OverlayExplanationPayload) => void;
@@ -30,9 +35,19 @@ declare global {
     onExplanationMinimized: (callback: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void) => void;
     onExplanationUpdated: (callback: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void) => void;
     setMainSize: (width: number, height: number) => void;
-    startOverlayNarration: (payload: { spokenText: string; overlayText: string; durationMs: number }) => void;
+    startOverlayNarration: (payload: {
+      spokenText: string;
+      overlayText: string;
+      durationMs: number;
+      captureRegion?: { x: number; y: number; width: number; height: number } | null;
+    }) => void;
     finishOverlayNarration: () => void;
-    onOverlayNarrationStart: (callback: (payload: { spokenText: string; overlayText: string; durationMs: number }) => void) => void;
+    onOverlayNarrationStart: (callback: (payload: {
+      spokenText: string;
+      overlayText: string;
+      durationMs: number;
+      captureRegion?: { x: number; y: number; width: number; height: number } | null;
+    }) => void) => void;
     onOverlayNarrationFinish: (callback: () => void) => void;
     flyToPoint: (x: number, y: number, screenNumber?: number, text?: string) => void;
     getSentryConfig: () => Promise<{ enabled: boolean; dsn: string }>;

@@ -6,8 +6,10 @@ import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 import {
   captureScreen,
+  captureScreenRegion,
   updateCapturedDisplays,
   capturedDisplays,
+  lastCaptureRegion,
   getCursorDisplayMeta,
   type CaptureResult,
 } from './screenshot.js';
@@ -21,6 +23,35 @@ initSentry();
 
 let mainWindow: BrowserWindow;
 let overlayWindow: BrowserWindow;
+let regionSelectActive = false;
+
+function setOverlayInteractive(interactive: boolean) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (interactive) {
+    overlayWindow.setIgnoreMouseEvents(false);
+    overlayWindow.setFocusable(true);
+    raiseOverlayWindow();
+    overlayWindow.show();
+    overlayWindow.focus();
+  } else {
+    overlayWindow.setIgnoreMouseEvents(true);
+    overlayWindow.setFocusable(false);
+  }
+}
+
+function restoreMainWindowMouseEvents() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setIgnoreMouseEvents(false);
+}
+
+function endRegionSelect() {
+  regionSelectActive = false;
+  setOverlayInteractive(false);
+  restoreMainWindowMouseEvents();
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onRegionSelectCancel');
+  }
+}
 
 const TOPMOST_LEVEL = 'screen-saver' as const;
 const PANEL_WIDTH = 380;
@@ -238,6 +269,58 @@ ipcMain.handle('capture-screen', async () => {
   return result;
 });
 
+ipcMain.handle('start-region-select', async () => {
+  if (regionSelectActive) return { ok: false, reason: 'already_active' };
+
+  updateCapturedDisplays();
+  const meta = getCursorDisplayMeta();
+  if (meta) {
+    positionOverlayOnDisplay({
+      displayFrameX: meta.displayFrameX,
+      displayFrameY: meta.displayFrameY,
+      displayWidth: meta.displayWidth,
+      displayHeight: meta.displayHeight,
+    });
+  }
+
+  regionSelectActive = true;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  }
+  setOverlayInteractive(true);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onRegionSelectStart');
+  }
+  // Re-assert after renderer effects that may toggle click-through (AnnotationOverlay).
+  setTimeout(() => {
+    if (regionSelectActive) setOverlayInteractive(true);
+  }, 0);
+  return { ok: true };
+});
+
+ipcMain.on('cancel-region-select', () => {
+  endRegionSelect();
+});
+
+ipcMain.handle('confirm-region-select', async (_event, rect: { x: number; y: number; width: number; height: number }) => {
+  try {
+    const result = await captureScreenRegion(rect);
+    endRegionSelect();
+    if (result) {
+      syncOverlayToCapture(result);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('onScreenCaptured', result);
+      }
+      return { ok: true };
+    }
+    return { ok: false, reason: 'capture_failed' };
+  } catch (err) {
+    endRegionSelect();
+    Sentry.captureException(err);
+    return { ok: false, reason: 'error' };
+  }
+});
+
 ipcMain.on('set-dictation-glow', (_event, active: boolean) => {
   setDictationGlow(!!active);
 });
@@ -308,7 +391,7 @@ ipcMain.on('set-main-size', (_event, width, height) => {
     positionPanel(width, panelHeight);
     if (width > COLLAPSED_SIZE || panelHeight > COLLAPSED_SIZE) {
       raiseMainWindow(true);
-    } else {
+    } else if (!regionSelectActive) {
       raiseOverlayWindow();
       raiseMainWindow();
     }
@@ -318,13 +401,19 @@ ipcMain.on('set-main-size', (_event, width, height) => {
 ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) {
+    if (regionSelectActive && win === overlayWindow && ignore) {
+      return;
+    }
     win.setIgnoreMouseEvents(ignore, options);
   }
 });
 
 ipcMain.on('start-overlay-narration', (_event, payload) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send('onOverlayNarrationStart', payload);
+    overlayWindow.webContents.send('onOverlayNarrationStart', {
+      ...payload,
+      captureRegion: lastCaptureRegion,
+    });
   }
 });
 
@@ -340,7 +429,7 @@ ipcMain.on('fly-to-point', (event, x, y, screenNumber, text) => {
       updateCapturedDisplays();
     }
 
-    const local = mapNormalizedToDisplayLocal(x, y, capturedDisplays, screenNumber);
+    const local = mapNormalizedToDisplayLocal(x, y, capturedDisplays, screenNumber, lastCaptureRegion);
     if (!local) {
       console.warn('fly-to-point: No target display identified.');
       return;

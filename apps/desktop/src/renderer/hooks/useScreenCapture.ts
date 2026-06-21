@@ -10,6 +10,8 @@ export interface ScreenshotCapture {
   displayWidth?: number;
   displayHeight?: number;
   scaleFactor?: number;
+  captureRegion?: { x: number; y: number; width: number; height: number };
+  isRegionCapture?: boolean;
 }
 
 export function getScreenMetadata(
@@ -25,15 +27,25 @@ export function getScreenMetadata(
     displayWidth: capture.displayWidth ?? capture.width,
     displayHeight: capture.displayHeight ?? capture.height,
     scaleFactor: capture.scaleFactor ?? 1,
+    captureRegion: capture.captureRegion,
+    isRegionCapture: capture.isRegionCapture,
   });
 }
 
 export function useScreenCapture() {
   const [screenshot, setScreenshot] = useState<ScreenshotCapture | null>(null);
+  const [isSelectingRegion, setIsSelectingRegion] = useState(false);
 
   useEffect(() => {
     window.electronAPI.onScreenCaptured((data: ScreenshotCapture) => {
-      if (data) setScreenshot(data);
+      if (data) {
+        setScreenshot(data);
+        setIsSelectingRegion(false);
+      }
+    });
+
+    window.electronAPI.onRegionSelectCancel(() => {
+      setIsSelectingRegion(false);
     });
   }, []);
 
@@ -43,9 +55,25 @@ export function useScreenCapture() {
     return data;
   }, []);
 
+  const startRegionSelect = useCallback(async () => {
+    setIsSelectingRegion(true);
+    const result = await window.electronAPI.startRegionSelect();
+    if (!result?.ok) {
+      setIsSelectingRegion(false);
+    }
+    return result;
+  }, []);
+
   const clearScreenshot = useCallback(() => {
     setScreenshot(null);
   }, []);
 
-  return { screenshot, captureScreen, clearScreenshot, getScreenMetadata: () => getScreenMetadata(screenshot) };
+  return {
+    screenshot,
+    captureScreen,
+    startRegionSelect,
+    isSelectingRegion,
+    clearScreenshot,
+    getScreenMetadata: () => getScreenMetadata(screenshot),
+  };
 }

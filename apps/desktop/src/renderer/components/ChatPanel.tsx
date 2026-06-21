@@ -44,6 +44,10 @@ interface Props {
   activeTurnId: string | null;
   startTurn: (userText: string, mode: TutorMode) => string;
   onRestoreExplanation: (turnId: string, explanation: StoredExplanation) => void;
+  isRegionCapture?: boolean;
+  isSelectingRegion?: boolean;
+  onStartRegionSelect?: () => Promise<void>;
+  onClearRegion?: () => void;
 }
 
 export default function ChatPanel({
@@ -74,7 +78,11 @@ export default function ChatPanel({
   chatTurns,
   activeTurnId,
   startTurn,
-  onRestoreExplanation
+  onRestoreExplanation,
+  isRegionCapture,
+  isSelectingRegion,
+  onStartRegionSelect,
+  onClearRegion,
 }: Props) {
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const [showMemory, setShowMemory] = useState(false);
@@ -599,6 +607,20 @@ export default function ChatPanel({
           <button className="icon-btn clear-overlay-btn" onClick={() => window.electronAPI.clearOverlay()} title="Clear Overlay">
             🧹
           </button>
+          <button
+            className={`icon-btn region-select-btn ${isRegionCapture ? 'active' : ''}`}
+            onClick={() => {
+              if (isRegionCapture && onClearRegion) {
+                onClearRegion();
+              } else if (onStartRegionSelect) {
+                void onStartRegionSelect();
+              }
+            }}
+            disabled={isSelectingRegion || isLoading}
+            title={isRegionCapture ? 'Clear selected area (use full screen)' : 'Select area of screen to ask about'}
+          >
+            {isSelectingRegion ? '⏳' : isRegionCapture ? '▣' : '▢'}
+          </button>
           <button className="icon-btn demo-reset-btn" onClick={() => {
             setShowMemory(false);
             setShowSponsors(false);
@@ -726,6 +748,13 @@ export default function ChatPanel({
         </div>
       ) : (
         !showMemory && !showSponsors && (
+          <>
+            {isRegionCapture && (
+              <div className="region-hint no-drag">Asking about selected screen area only</div>
+            )}
+            {isSelectingRegion && (
+              <div className="region-hint no-drag">Drag on screen to select an area…</div>
+            )}
           <form className="chat-input no-drag" onSubmit={handleSubmit}>
             <button
               type="button"
@@ -747,6 +776,7 @@ export default function ChatPanel({
               Send
             </button>
           </form>
+          </>
         )
       )}
     </div>

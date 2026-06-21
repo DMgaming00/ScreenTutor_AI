@@ -8,10 +8,13 @@ export interface HoldDictationCallbacks {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let holdActive = false;
+let comboPressedAt: number | null = null;
 let callbacks: HoldDictationCallbacks | null = null;
 let tapToggleActive = false;
 
 const POLL_MS = 40;
+/** Ignore brief accidental taps; require a deliberate hold before starting dictation. */
+const MIN_HOLD_MS = 150;
 
 async function loadWin32Poll() {
   if (process.platform !== 'win32') return null;
@@ -48,6 +51,7 @@ function registerTapToggleFallback(onStart: () => void, onEnd: () => void) {
 export async function registerHoldDictationShortcuts(onStart: () => void, onEnd: () => void) {
   callbacks = { onStart, onEnd };
   holdActive = false;
+  comboPressedAt = null;
   tapToggleActive = false;
 
   const win32 = await loadWin32Poll();
@@ -64,12 +68,22 @@ export async function registerHoldDictationShortcuts(onStart: () => void, onEnd:
         return;
       }
 
-      if (comboDown && !holdActive) {
-        holdActive = true;
-        callbacks.onStart();
-      } else if (!comboDown && holdActive) {
-        holdActive = false;
-        callbacks.onEnd();
+      const now = Date.now();
+
+      if (comboDown) {
+        if (comboPressedAt === null) {
+          comboPressedAt = now;
+        }
+        if (!holdActive && now - comboPressedAt >= MIN_HOLD_MS) {
+          holdActive = true;
+          callbacks.onStart();
+        }
+      } else {
+        comboPressedAt = null;
+        if (holdActive) {
+          holdActive = false;
+          callbacks.onEnd();
+        }
       }
     }, POLL_MS);
 
@@ -85,6 +99,7 @@ export async function registerHoldDictationShortcuts(onStart: () => void, onEnd:
 
 export function unregisterHoldDictationShortcuts() {
   holdActive = false;
+  comboPressedAt = null;
   tapToggleActive = false;
   callbacks = null;
 

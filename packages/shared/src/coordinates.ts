@@ -1,4 +1,6 @@
 import type { ScreenMetadata } from './schemas/tutor.js';
+import type { CaptureRegion } from './capture-region.js';
+import { mapPointThroughCaptureRegion } from './capture-region.js';
 
 export interface CapturedDisplay {
   screenNumber: number;
@@ -39,7 +41,8 @@ export function mapCoordinatesToGlobal({
   y,
   screenNumber,
   displays,
-}: MapCoordinatesParams): MappedCoordinatesResult | null {
+  captureRegion,
+}: MapCoordinatesParams & { captureRegion?: CaptureRegion | null }): MappedCoordinatesResult | null {
   if (displays.length === 0) {
     return null;
   }
@@ -56,8 +59,9 @@ export function mapCoordinatesToGlobal({
     targetDisplay = displays[0];
   }
 
-  const clampedX = Math.max(0, Math.min(x, 1.0));
-  const clampedY = Math.max(0, Math.min(y, 1.0));
+  const mapped = mapPointThroughCaptureRegion(x, y, captureRegion);
+  const clampedX = Math.max(0, Math.min(mapped.x, 1.0));
+  const clampedY = Math.max(0, Math.min(mapped.y, 1.0));
 
   const dipX = clampedX * targetDisplay.displayWidth;
   const dipY = clampedY * targetDisplay.displayHeight;
@@ -77,9 +81,10 @@ export function mapNormalizedToDisplayLocal(
   x: number,
   y: number,
   displays: CapturedDisplay[],
-  screenNumber?: number | null
+  screenNumber?: number | null,
+  captureRegion?: CaptureRegion | null
 ): DisplayLocalCoordinates | null {
-  const mapped = mapCoordinatesToGlobal({ x, y, screenNumber, displays });
+  const mapped = mapCoordinatesToGlobal({ x, y, screenNumber, displays, captureRegion });
   if (!mapped) return null;
 
   return {
@@ -99,8 +104,12 @@ export function buildCoordinateGuide(meta?: ScreenMetadata | null): string {
   const imageH = meta.imageHeight ?? meta.height ?? 1080;
   const screenNum = meta.screenNumber ?? 1;
 
+  const regionNote = meta.captureRegion
+    ? `\nThe image is a CROPPED region of the screen (not the full display). Tags are relative to this crop only.`
+    : '';
+
   return `COORDINATE SYSTEM (CRITICAL — read before tagging):
-The attached screenshot is exactly ${imageW}×${imageH} pixels (screen ${screenNum}).
+The attached screenshot is exactly ${imageW}×${imageH} pixels (screen ${screenNum}).${regionNote}
 Every [POINT:x,y] and [DRAW:*] coordinate MUST be a normalized fraction 0.0–1.0 on THIS image:
   • x=0.0 → left edge of the image    x=1.0 → right edge
   • y=0.0 → top edge of the image     y=1.0 → bottom edge
@@ -119,6 +128,8 @@ export function captureResultToScreenMetadata(result: {
   displayWidth: number;
   displayHeight: number;
   scaleFactor: number;
+  captureRegion?: CaptureRegion;
+  isRegionCapture?: boolean;
 }) {
   return {
     displayId: result.displayId,
@@ -131,5 +142,7 @@ export function captureResultToScreenMetadata(result: {
     screenNumber: result.screenNumber,
     scaleFactor: result.scaleFactor,
     coordinateSpace: 'normalized_image' as const,
+    captureRegion: result.captureRegion,
+    isRegionCapture: result.isRegionCapture,
   };
 }

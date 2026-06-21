@@ -27,6 +27,16 @@ export const ScreenMetadata = z.object({
   screenNumber: z.number().optional(),
   scaleFactor: z.number().optional(),
   coordinateSpace: z.enum(['normalized_image']).optional(),
+  /** When set, image is a crop; tags are relative to the crop and mapped via this region */
+  captureRegion: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      width: z.number(),
+      height: z.number(),
+    })
+    .optional(),
+  isRegionCapture: z.boolean().optional(),
 });
 export type ScreenMetadata = z.infer<typeof ScreenMetadata>;
 

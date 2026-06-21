@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DrawingCommand, PointTarget } from '@screentutor/shared';
-import { parseStreamTags, snapShapeToPoint, buildNarrationSteps, type CanvasDrawShape, type StreamEvent, type NarrationStep } from '@screentutor/shared';
+import {
+  parseStreamTags,
+  snapShapeToPoint,
+  stripDuplicateShapeLabel,
+  mapPointThroughCaptureRegion,
+  mapShapeThroughCaptureRegion,
+  buildNarrationSteps,
+  type CaptureRegion,
+  type CanvasDrawShape,
+  type StreamEvent,
+  type NarrationStep,
+} from '@screentutor/shared';
 import type { OverlayExplanationPayload } from '../types/explanation';
 import ExplanationBubbleText from './ExplanationBubbleText';
 import {
@@ -93,6 +104,9 @@ export default function AnnotationOverlay() {
   const pointerQueueRef = useRef<QueuedPoint[]>([]);
   const shapesRef = useRef<ActiveShape[]>([]);
   const lastPointNormRef = useRef<{ x: number; y: number } | null>(null);
+  const lastPointLabelRef = useRef('');
+  const captureRegionRef = useRef<CaptureRegion | null>(null);
+  const [isRegionSelecting, setIsRegionSelecting] = useState(false);
   const firedEventCountRef = useRef(0);
 
   const moveRef = useRef<{
@@ -172,16 +186,21 @@ export default function AnnotationOverlay() {
   const applyStreamEvent = (event: StreamEvent) => {
     const W = window.innerWidth;
     const H = window.innerHeight;
+    const region = captureRegionRef.current;
 
     if (event.type === 'point') {
-      lastPointNormRef.current = { x: event.x, y: event.y };
-      enqueuePoint(event.x * W, event.y * H, event.label);
-      startNextMove();
+      const mapped = mapPointThroughCaptureRegion(event.x, event.y, region);
+      lastPointNormRef.current = { x: mapped.x, y: mapped.y };
+      lastPointLabelRef.current = event.label;
+      enqueuePoint(mapped.x * W, mapped.y * H, event.label);
     } else if (event.type === 'clear') {
       shapesRef.current = [];
       lastPointNormRef.current = null;
+      lastPointLabelRef.current = '';
     } else if (event.type === 'draw') {
-      const anchored = snapShapeToPoint(event.shape, lastPointNormRef.current) ?? event.shape;
+      const mappedShape = mapShapeThroughCaptureRegion(event.shape, region);
+      const snapped = snapShapeToPoint(mappedShape, lastPointNormRef.current) ?? mappedShape;
+      const anchored = stripDuplicateShapeLabel(snapped, lastPointLabelRef.current);
       shapesRef.current.push({
         id: `shape-${shapeIdRef.current++}`,
         shape: anchored,
@@ -244,7 +263,13 @@ export default function AnnotationOverlay() {
     applyNarrationStep(steps.length - 1, steps);
   };
 
-  const startNarration = (spokenText: string, overlayText: string, durationMs: number) => {
+  const startNarration = (
+    spokenText: string,
+    overlayText: string,
+    durationMs: number,
+    captureRegion?: CaptureRegion | null
+  ) => {
+    captureRegionRef.current = captureRegion ?? null;
     stopCharStream();
     stopNarration();
     if (charStreamFallbackRef.current) {
@@ -478,12 +503,25 @@ export default function AnnotationOverlay() {
       setIsVisible(false);
     });
 
-    window.electronAPI.onOverlayNarrationStart((data: { spokenText: string; overlayText: string; durationMs: number }) => {
-      startNarration(data.spokenText, data.overlayText, data.durationMs);
+    window.electronAPI.onOverlayNarrationStart((data: {
+      spokenText: string;
+      overlayText: string;
+      durationMs: number;
+      captureRegion?: CaptureRegion | null;
+    }) => {
+      startNarration(data.spokenText, data.overlayText, data.durationMs, data.captureRegion);
     });
 
     window.electronAPI.onOverlayNarrationFinish(() => {
       finishNarration();
+    });
+
+    window.electronAPI.onRegionSelectStart(() => {
+      setIsRegionSelecting(true);
+    });
+
+    window.electronAPI.onRegionSelectCancel(() => {
+      setIsRegionSelecting(false);
     });
 
     window.electronAPI.onRestoreExplanation((data: OverlayExplanationPayload) => {
@@ -524,12 +562,16 @@ export default function AnnotationOverlay() {
   }, [point?.pointTarget?.x, point?.pointTarget?.y, point?.text]);
 
   useEffect(() => {
+    if (isRegionSelecting) {
+      window.electronAPI.setIgnoreMouseEvents(false);
+      return;
+    }
     if (point && !isMinimized) {
       window.electronAPI.setIgnoreMouseEvents(false);
     } else {
       window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
     }
-  }, [point, isMinimized]);
+  }, [point, isMinimized, isRegionSelecting]);
 
   useEffect(() => {
     stopCharStream();

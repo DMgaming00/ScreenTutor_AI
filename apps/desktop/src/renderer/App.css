@@ -24,6 +24,13 @@ html, body {
   overflow: hidden;
 }
 
+.app-container.expanded .floating-launcher {
+  height: auto;
+  width: auto;
+  align-self: flex-end;
+  flex-shrink: 0;
+}
+
 .app-container.collapsed {
   justify-content: center;
   align-items: center;

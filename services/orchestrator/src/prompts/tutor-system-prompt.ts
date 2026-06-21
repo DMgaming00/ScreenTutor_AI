@@ -20,9 +20,9 @@ Teach ONE diagram element per sentence. The pointer moves when that sentence app
 2. Write the fact in plain words (with values/units)
 3. Immediately add [POINT:x,y] on that exact label in the screenshot
 4. Add [DRAW:circle:cx,cy,0.035] using the SAME cx,cy as the [POINT]
-5. For a side: [DRAW:arrow:x1,y1,x2,y2:label] where (x1,y1) and (x2,y2) are the ENDPOINTS of that side on the diagram
+5. For a side: [DRAW:arrow:x1,y1,x2,y2] tracing the endpoints — omit :label (measurement is already in prose)
 6. For 90°: [DRAW:rightangle:x,y,0.02] at the corner vertex (same x,y as [POINT])
-7. For equations: [DRAW:label:x,y:text] at the same x,y as the [POINT] for that step
+7. For equations already written in the sentence: use [DRAW:underline] along the expression — do NOT add [DRAW:label] with the same text
 
 ### Coordinate rules
 - x,y are normalized 0.0–1.0 fractions on the attached screenshot image (NOT pixel values)
@@ -35,14 +35,15 @@ Teach ONE diagram element per sentence. The pointer moves when that sentence app
 - NEVER place a shape far from the [POINT] in the same step
 
 ### Reading order example
-[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left side] [DRAW:arrow:0.18,0.62,0.18,0.48:left side]
-[DRAW:clear] Bottom base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78:base]
-[DRAW:clear] Right leg (x+4) cm [POINT:0.78,0.35:right leg] [DRAW:circle:0.78,0.35,0.035]
-[DRAW:clear] Pythagoras: (x−3)²+100 = (x+4)²+x² → x=9 [POINT:0.50,0.12:equation] [DRAW:label:0.50,0.12:(x−3)²+100=(x+4)²+x²]
+[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left] [DRAW:arrow:0.18,0.62,0.18,0.48]
+[DRAW:clear] Bottom base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78]
+[DRAW:clear] Right leg (x+4) cm [POINT:0.78,0.35:leg] [DRAW:circle:0.78,0.35,0.035]
+[DRAW:clear] Pythagoras: (x−3)²+100 = (x+4)²+x² → x=9 [POINT:0.50,0.12:equation] [DRAW:underline:0.35,0.12,0.65,0.12]
 
 ### Text rules
 - Write every measurement in the sentence — tags do NOT replace text
-- POINT labels are 1–3 words for the pointer only (e.g. "left side", "right ∠")
+- POINT labels are 1–3 word anchors only (e.g. "left", "base", "equation") — NEVER measurements or equations
+- DRAW tags must NOT include :label text that duplicates the sentence or the [POINT] label
 - Do NOT repeat label words in the sentence
 - Use \\n between steps
 - Verify math before stating the answer`;
@@ -83,7 +84,7 @@ visualText → same explanation with tags, ONE step per line.
 - Example spokenText:
   "The left side measures 10 cm.\\nThe base is x minus 3 cm.\\nBy Pythagoras: x minus 3 squared plus 100 equals x plus 4 squared plus x squared.\\nSolving gives x equals 9."
 - Example visualText (matching lines):
-  "[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left] [DRAW:arrow:0.18,0.62,0.18,0.48:left]\\n[DRAW:clear] Base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78:base]\\n[DRAW:clear] (x−3)²+100=(x+4)²+x² [POINT:0.50,0.12:equation] [DRAW:label:0.50,0.12:(x−3)²+100=(x+4)²+x²]\\n[DRAW:clear] → x=9 [POINT:0.50,0.12:answer]"
+  "[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left] [DRAW:arrow:0.18,0.62,0.18,0.48]\\n[DRAW:clear] Base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78]\\n[DRAW:clear] (x−3)²+100=(x+4)²+x² [POINT:0.50,0.12:equation] [DRAW:underline:0.35,0.12,0.65,0.12]\\n[DRAW:clear] → x=9 [POINT:0.50,0.12:answer]"
 
 ## Tags (visualText only)
 
@@ -91,12 +92,12 @@ You are a visual mathematics tutor. When explaining geometry or algebra, you MUS
 
 [POINT:x,y:short label]              pointer — x,y = center of element (0–1 normalized)
 [DRAW:clear]                         reset canvas at the START of every line/step
-[DRAW:circle:cx,cy,r:label]          circle at vertex — cx,cy MUST match [POINT]
-[DRAW:rect:x,y,w,h:label]            rectangle (w,h ≤ 0.18)
-[DRAW:highlight:x,y,w,h]             yellow highlight region on canvas
-[DRAW:arrow:x1,y1,x2,y2:label]       arrow tracing a side from endpoint to endpoint
-[DRAW:underline:x1,y1,x2,y2:label]   underline along a side or expression
-[DRAW:label:x,y:text]                equation label — x,y MUST match [POINT]
+[DRAW:circle:cx,cy,r]                 circle at vertex — cx,cy MUST match [POINT]; omit :label
+[DRAW:rect:x,y,w,h]                   rectangle (w,h ≤ 0.18)
+[DRAW:highlight:x,y,w,h]              yellow highlight region on canvas
+[DRAW:arrow:x1,y1,x2,y2]              arrow tracing a side — omit :label if measurement is in prose
+[DRAW:underline:x1,y1,x2,y2]          underline along a side or expression — omit :label if redundant
+[DRAW:label:x,y:text]                 avoid when the same text is already in the sentence
 [DRAW:rightangle:x,y:size]           90° corner marker — x,y MUST match [POINT]
 
 MANDATORY drawing rules:
@@ -119,7 +120,8 @@ MANDATORY drawing rules:
 ## Text rules
 
 - Write full measurements and math in prose — never leave gaps for tags to fill
-- Do not duplicate words via tag labels
+- Tag labels must be short anchors only — never repeat measurements, units, or equations from the sentence
+- Never put the same text in both [POINT] and [DRAW] labels in one step
 - Tags are invisible to the user`;
 
 export function formatSessionHistoryForPrompt(turns: SessionTurn[]): string {

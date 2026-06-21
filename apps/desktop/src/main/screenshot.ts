@@ -2,9 +2,17 @@ import { desktopCapturer, screen } from 'electron';
 import { createHash } from 'crypto';
 import { isWindowDenied } from './privacy.js';
 import * as Sentry from '@sentry/node';
-import { CapturedDisplay } from '@screentutor/shared';
+import { CapturedDisplay, normalizeCaptureRegion, type CaptureRegion } from '@screentutor/shared';
 
 export let capturedDisplays: CapturedDisplay[] = [];
+export let lastCaptureRegion: CaptureRegion | null = null;
+
+export interface DipRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface CaptureResult {
   base64: string;
@@ -19,6 +27,8 @@ export interface CaptureResult {
   displayFrameX: number;
   displayFrameY: number;
   scaleFactor: number;
+  captureRegion?: CaptureRegion;
+  isRegionCapture?: boolean;
 }
 
 export function updateCapturedDisplays() {
@@ -54,6 +64,16 @@ export function getCursorDisplayMeta(): CapturedDisplay | null {
 }
 
 export async function captureScreen(): Promise<CaptureResult | null> {
+  lastCaptureRegion = null;
+  return captureScreenInternal(null);
+}
+
+/** Capture full display then crop to a display-local DIP rectangle. */
+export async function captureScreenRegion(regionDip: DipRect): Promise<CaptureResult | null> {
+  return captureScreenInternal(regionDip);
+}
+
+async function captureScreenInternal(regionDip: DipRect | null): Promise<CaptureResult | null> {
   try {
     updateCapturedDisplays();
 
@@ -90,13 +110,53 @@ export async function captureScreen(): Promise<CaptureResult | null> {
     }
 
     const image = matchedSource.thumbnail;
-    const size = image.getSize();
-    const base64 = image.toDataURL();
+    const fullSize = image.getSize();
+    const pixelsPerDip = fullSize.width / targetMeta.displayWidth;
+
+    let outputImage = image;
+    let captureRegion: CaptureRegion | undefined;
+
+    if (regionDip) {
+      const minSize = 24;
+      const dipX = Math.max(0, Math.min(regionDip.x, targetMeta.displayWidth - minSize));
+      const dipY = Math.max(0, Math.min(regionDip.y, targetMeta.displayHeight - minSize));
+      const dipW = Math.max(minSize, Math.min(regionDip.width, targetMeta.displayWidth - dipX));
+      const dipH = Math.max(minSize, Math.min(regionDip.height, targetMeta.displayHeight - dipY));
+
+      const cropRect = {
+        x: Math.round(dipX * pixelsPerDip),
+        y: Math.round(dipY * pixelsPerDip),
+        width: Math.max(1, Math.round(dipW * pixelsPerDip)),
+        height: Math.max(1, Math.round(dipH * pixelsPerDip)),
+      };
+
+      cropRect.width = Math.min(cropRect.width, fullSize.width - cropRect.x);
+      cropRect.height = Math.min(cropRect.height, fullSize.height - cropRect.y);
+
+      outputImage = image.crop(cropRect);
+      captureRegion = normalizeCaptureRegion(
+        dipX,
+        dipY,
+        dipW,
+        dipH,
+        targetMeta.displayWidth,
+        targetMeta.displayHeight
+      );
+      lastCaptureRegion = captureRegion;
+      console.log(
+        `[Screenshot] region crop dip=(${dipX},${dipY},${dipW}x${dipH}) px=(${cropRect.x},${cropRect.y},${cropRect.width}x${cropRect.height})`
+      );
+    } else {
+      lastCaptureRegion = null;
+    }
+
+    const size = outputImage.getSize();
+    const base64 = outputImage.toDataURL();
 
     logScreenshotMetadata(base64, size.width, size.height);
 
     console.log(
-      `[Screenshot] display=${targetMeta.screenNumber} image=${size.width}x${size.height} dip=${targetMeta.displayWidth}x${targetMeta.displayHeight} scale=${targetMeta.displayScaleFactor}`
+      `[Screenshot] display=${targetMeta.screenNumber} image=${size.width}x${size.height} dip=${targetMeta.displayWidth}x${targetMeta.displayHeight} scale=${targetMeta.displayScaleFactor}${captureRegion ? ' (region)' : ''}`
     );
 
     return {
@@ -110,6 +170,8 @@ export async function captureScreen(): Promise<CaptureResult | null> {
       displayFrameX: targetMeta.displayFrameX,
       displayFrameY: targetMeta.displayFrameY,
       scaleFactor: targetMeta.displayScaleFactor,
+      captureRegion,
+      isRegionCapture: !!captureRegion,
     };
   } catch (err) {
     Sentry.captureException(err);

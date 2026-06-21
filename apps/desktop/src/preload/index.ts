@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 const electronAPI = {
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
+  startRegionSelect: () => ipcRenderer.invoke('start-region-select'),
+  cancelRegionSelect: () => ipcRenderer.send('cancel-region-select'),
+  confirmRegionSelect: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('confirm-region-select', rect),
   sendDrawings: (drawings: any[]) => ipcRenderer.send('send-drawings', drawings),
   clearOverlay: () => ipcRenderer.send('clear-overlay'),
   restoreExplanation: (payload: any) => ipcRenderer.send('restore-explanation', payload),
@@ -12,6 +16,12 @@ const electronAPI = {
   getPrivacyMode: () => ipcRenderer.invoke('get-privacy-mode'),
   onScreenCaptured: (callback: (data: any) => void) => {
     ipcRenderer.on('onScreenCaptured', (_event, data) => callback(data));
+  },
+  onRegionSelectStart: (callback: () => void) => {
+    ipcRenderer.on('onRegionSelectStart', () => callback());
+  },
+  onRegionSelectCancel: (callback: () => void) => {
+    ipcRenderer.on('onRegionSelectCancel', () => callback());
   },
   onHotkeyTriggered: (callback: () => void) => {
     ipcRenderer.on('onHotkeyTriggered', () => callback());
@@ -48,10 +58,19 @@ const electronAPI = {
     ipcRenderer.on('onExplanationUpdated', (_event, payload) => callback(payload));
   },
   setMainSize: (width: number, height: number) => ipcRenderer.send('set-main-size', width, height),
-  startOverlayNarration: (payload: { spokenText: string; overlayText: string; durationMs: number }) =>
-    ipcRenderer.send('start-overlay-narration', payload),
+  startOverlayNarration: (payload: {
+    spokenText: string;
+    overlayText: string;
+    durationMs: number;
+    captureRegion?: { x: number; y: number; width: number; height: number } | null;
+  }) => ipcRenderer.send('start-overlay-narration', payload),
   finishOverlayNarration: () => ipcRenderer.send('finish-overlay-narration'),
-  onOverlayNarrationStart: (callback: (payload: { spokenText: string; overlayText: string; durationMs: number }) => void) => {
+  onOverlayNarrationStart: (callback: (payload: {
+    spokenText: string;
+    overlayText: string;
+    durationMs: number;
+    captureRegion?: { x: number; y: number; width: number; height: number } | null;
+  }) => void) => {
     ipcRenderer.on('onOverlayNarrationStart', (_event, payload) => callback(payload));
   },
   onOverlayNarrationFinish: (callback: () => void) => {

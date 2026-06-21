@@ -35,7 +35,7 @@ export default function App() {
     localStorage.setItem('screentutor_mode', newMode);
   };
 
-  const { screenshot, captureScreen, clearScreenshot } = useScreenCapture();
+  const { screenshot, captureScreen, clearScreenshot, startRegionSelect, isSelectingRegion } = useScreenCapture();
   const { askQuestion, response, isLoading, isStreaming, isResponseReady, error, clearResponse } = useTutor();
   const { turns: chatTurns, activeTurnId, startTurn, resetTurns, syncActiveTurn, updateTurnExplanation, setTurnExplanation } = useChatHistory();
   const [isScanning, setIsScanning] = useState(false);
@@ -65,6 +65,12 @@ export default function App() {
     isPanelExpandedRef.current = isPanelExpanded;
     activeTurnIdRef.current = activeTurnId;
   }, [activeLessonId, mode, screenshot, isRecordingVoice, isPanelExpanded, activeTurnId]);
+
+  useEffect(() => {
+    if (screenshot?.isRegionCapture && screenshot.base64 && !isPanelExpandedRef.current) {
+      expandPanel();
+    }
+  }, [screenshot?.isRegionCapture, screenshot?.base64]);
 
   useEffect(() => {
     setResponseDelivered(false);
@@ -191,14 +197,18 @@ export default function App() {
         let capBase64 = screenshotRef.current?.base64;
         let capMeta = getScreenMetadata(screenshotRef.current);
         if (!activeLessonIdRef.current) {
-          const capData = await captureScreen();
-          setIsScanning(false);
-          if (!capData) {
-            setBuddyState('privacy');
-            return;
+          if (!capBase64) {
+            const capData = await captureScreen();
+            setIsScanning(false);
+            if (!capData) {
+              setBuddyState('privacy');
+              return;
+            }
+            capBase64 = capData.base64;
+            capMeta = getScreenMetadata(capData);
+          } else {
+            setIsScanning(false);
           }
-          capBase64 = capData.base64;
-          capMeta = getScreenMetadata(capData);
         } else {
           setIsScanning(false);
         }
@@ -236,11 +246,10 @@ export default function App() {
         return;
       }
 
-      setIsScanning(true);
-      await captureScreen();
-      setIsScanning(false);
       performanceTracker.endSpan('hotkey_to_listening');
 
+      // Screen capture runs on release (stopVoiceRecordingAndSubmit), not on hotkey press —
+      // avoids triggering Windows' screen-capture / recording UI while holding the key.
       await startVoiceRecordingRef.current({ showGlow: false, fromHoldHotkey: true });
     });
 
@@ -320,6 +329,7 @@ export default function App() {
       spokenText: spoken,
       overlayText: overlay,
       durationMs,
+      captureRegion: screenshotRef.current?.captureRegion ?? null,
     });
 
     clearChatRevealTimers();
@@ -414,18 +424,22 @@ export default function App() {
       let capBase64 = screenshot?.base64;
       let capMeta = getScreenMetadata(screenshot);
       if (!activeLessonId) {
-        performanceTracker.startSpan('listening_to_screenshot');
-        const capData = await captureScreen();
-        performanceTracker.endSpan('listening_to_screenshot');
-        setIsScanning(false);
+        if (!capBase64) {
+          performanceTracker.startSpan('listening_to_screenshot');
+          const capData = await captureScreen();
+          performanceTracker.endSpan('listening_to_screenshot');
+          setIsScanning(false);
 
-        if (!capData) {
-          setBuddyState('privacy');
-          performanceTracker.endSpan('total_interaction_latency');
-          return;
+          if (!capData) {
+            setBuddyState('privacy');
+            performanceTracker.endSpan('total_interaction_latency');
+            return;
+          }
+          capBase64 = capData.base64;
+          capMeta = getScreenMetadata(capData);
+        } else {
+          setIsScanning(false);
         }
-        capBase64 = capData.base64;
-        capMeta = getScreenMetadata(capData);
       } else {
         setIsScanning(false);
       }
@@ -439,6 +453,17 @@ export default function App() {
       setIsScanning(false);
       performanceTracker.endSpan('total_interaction_latency');
     }
+  };
+
+  const handleStartRegionSelect = async () => {
+    if (isPanelExpandedRef.current) {
+      collapsePanel();
+    }
+    await startRegionSelect();
+  };
+
+  const handleClearRegion = () => {
+    clearScreenshot();
   };
 
   const handleDemoReset = async () => {
@@ -527,6 +552,10 @@ export default function App() {
           activeTurnId={activeTurnId}
           startTurn={startTurn}
           onRestoreExplanation={handleRestoreExplanation}
+          isRegionCapture={!!screenshot?.isRegionCapture}
+          isSelectingRegion={isSelectingRegion}
+          onStartRegionSelect={handleStartRegionSelect}
+          onClearRegion={handleClearRegion}
         />
       )}
       <FloatingLauncher

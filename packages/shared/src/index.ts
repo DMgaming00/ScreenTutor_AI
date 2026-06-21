@@ -26,4 +26,5 @@ export * from './redaction.js';
 
 // Coordinate Mapping
 export * from './coordinates.js';
+export * from './capture-region.js';
 

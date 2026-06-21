@@ -7,6 +7,154 @@ const DRAW_INNER = /\[DRAW:([^\]]+)\]/gi;
 const ANCHOR_DRIFT = 0.07;
 const MAX_SNAPPED_SPAN = 0.45;
 
+function normalizeForDedupe(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[−–—]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function compactForDedupe(text: string): string {
+  return normalizeForDedupe(text)
+    .replace(/[()]/g, '')
+    .replace(/[^a-z0-9+\-*/=²^]/g, '');
+}
+
+export function labelsEquivalent(a: string, b: string): boolean {
+  const na = normalizeForDedupe(a);
+  const nb = normalizeForDedupe(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ca = compactForDedupe(a);
+  const cb = compactForDedupe(b);
+  return ca.length >= 2 && cb.length >= 2 && ca === cb;
+}
+
+export function labelAlreadyInProse(prose: string, label: string): boolean {
+  const normalizedLabel = normalizeForDedupe(label);
+  if (!normalizedLabel || normalizedLabel.length < 2) return false;
+
+  const normalizedProse = normalizeForDedupe(prose);
+  if (normalizedProse.includes(normalizedLabel)) return true;
+
+  const compactProse = compactForDedupe(prose);
+  const compactLabel = compactForDedupe(label);
+  return compactLabel.length >= 2 && compactProse.includes(compactLabel);
+}
+
+function dedupePointContent(content: string, prose: string, drawLabelInStep: string | undefined): string {
+  const trimmed = content.trim();
+  const parts = trimmed.split(':');
+  if (parts.length < 2) return trimmed;
+
+  const coords = parts[0];
+  const label = parts.slice(1).join(':').trim();
+  if (!label) return trimmed;
+
+  if (
+    labelAlreadyInProse(prose, label) ||
+    (drawLabelInStep && labelsEquivalent(label, drawLabelInStep))
+  ) {
+    return `${coords}:`;
+  }
+  return trimmed;
+}
+
+function dedupeDrawInner(
+  inner: string,
+  prose: string,
+  pointLabelInStep: string | undefined
+): string | null {
+  const trimmed = inner.trim();
+  if (trimmed.toLowerCase() === 'clear') return trimmed;
+
+  const parts = trimmed.split(':');
+  if (parts.length <= 2) return trimmed;
+
+  const kind = parts[0].toLowerCase();
+  const label = parts.slice(2).join(':').trim();
+  if (!label) return trimmed;
+
+  const redundantWithProse = labelAlreadyInProse(prose, label);
+  const redundantWithPoint =
+    pointLabelInStep && labelsEquivalent(label, pointLabelInStep);
+
+  if (redundantWithProse || redundantWithPoint) {
+    if (kind === 'label') return null;
+    return parts.slice(0, 2).join(':');
+  }
+  return trimmed;
+}
+
+/** Remove tag labels that repeat prose or duplicate the step's POINT label. */
+export function dedupeRedundantTagLabels(text: string): string {
+  if (!text) return text;
+
+  return text
+    .split('\n')
+    .map((line) => {
+      const drawLabelsInLine: string[] = [];
+      for (const m of line.matchAll(/\[DRAW:(?!clear)([^\]]+)\]/gi)) {
+        const inner = m[1].trim();
+        const parts = inner.split(':');
+        if (parts.length > 2) {
+          drawLabelsInLine.push(parts.slice(2).join(':'));
+        }
+      }
+
+      const tagRegex = /\[(POINT|DRAW):([^\]]+)\]/gi;
+      let result = '';
+      let lastIndex = 0;
+      let proseSoFar = '';
+      let pointLabelInStep: string | undefined;
+      let drawIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = tagRegex.exec(line)) !== null) {
+        result += line.substring(lastIndex, match.index);
+        proseSoFar += line.substring(lastIndex, match.index);
+
+        const kind = match[1].toUpperCase();
+        const content = match[2];
+
+        if (kind === 'POINT') {
+          const upcomingDrawLabel = drawLabelsInLine[drawIndex];
+          const rewritten = dedupePointContent(content, proseSoFar, upcomingDrawLabel);
+          result += `[POINT:${rewritten}]`;
+          const parts = rewritten.trim().split(':');
+          pointLabelInStep = parts.length > 1 ? parts.slice(1).join(':').trim() : undefined;
+        } else if (content.trim().toLowerCase() === 'clear') {
+          result += match[0];
+          pointLabelInStep = undefined;
+          drawIndex = 0;
+        } else {
+          const rewritten = dedupeDrawInner(content, proseSoFar, pointLabelInStep);
+          if (rewritten !== null) {
+            result += `[DRAW:${rewritten}]`;
+          }
+          drawIndex++;
+        }
+
+        lastIndex = match.index + match[0].length;
+      }
+
+      result += line.substring(lastIndex);
+      return result;
+    })
+    .join('\n');
+}
+
+/** Drop a shape's canvas label when it duplicates the active pointer label. */
+export function stripDuplicateShapeLabel(
+  shape: CanvasDrawShape,
+  pointerLabel: string | undefined
+): CanvasDrawShape {
+  if (!shape.label || !pointerLabel) return shape;
+  if (!labelsEquivalent(shape.label, pointerLabel)) return shape;
+  return { ...shape, label: undefined };
+}
+
 function parsePointCoords(content: string): { x: number; y: number } | null {
   const trimmed = content.trim();
   if (trimmed.toLowerCase() === 'none') return null;
@@ -129,6 +277,8 @@ export function snapShapeToPoint(
  */
 export function refineOverlayAnnotationTags(text: string): string {
   if (!text) return text;
+
+  text = dedupeRedundantTagLabels(text);
 
   const parts: string[] = [];
   let lastIndex = 0;

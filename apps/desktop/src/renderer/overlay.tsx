@@ -1,7 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import AnnotationOverlay from './components/AnnotationOverlay';
 import DictationGlow from './components/DictationGlow';
+import RegionSelectOverlay from './components/RegionSelectOverlay';
+import AnnotationOverlay from './components/AnnotationOverlay';
 import { initRendererSentry } from './sentry';
 
 initRendererSentry();
@@ -11,6 +12,7 @@ if (rootElement) {
   createRoot(rootElement).render(
     <React.StrictMode>
       <DictationGlow />
+      <RegionSelectOverlay />
       <AnnotationOverlay />
     </React.StrictMode>
   );
