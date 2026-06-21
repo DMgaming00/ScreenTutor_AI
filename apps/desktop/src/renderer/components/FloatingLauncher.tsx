@@ -41,10 +41,12 @@ export default function FloatingLauncher({
         title={getTooltip()}
         aria-label={getTooltip()}
       >
-        <TutorCursorIcon size={isExpanded ? 24 : 30} className="launcher-cursor-icon" />
-        {(state === 'thinking' || state === 'listening' || isSpeaking) && (
-          <span className="launcher-activity-ring" aria-hidden="true" />
-        )}
+        <span className="launcher-icon-wrap">
+          <TutorCursorIcon size={isExpanded ? 50 : 58} className="launcher-logo" />
+          {(state === 'thinking' || state === 'listening' || isSpeaking) && (
+            <span className="launcher-activity-ring" aria-hidden="true" />
+          )}
+        </span>
       </button>
     </div>
   );

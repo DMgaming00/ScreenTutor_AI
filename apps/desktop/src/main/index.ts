@@ -25,7 +25,7 @@ let overlayWindow: BrowserWindow;
 const TOPMOST_LEVEL = 'screen-saver' as const;
 const PANEL_WIDTH = 380;
 const PANEL_HEIGHT = 580;
-const COLLAPSED_SIZE = 56;
+const COLLAPSED_SIZE = 96;
 const WINDOW_MARGIN = 16;
 
 function positionPanel(width: number, height: number) {
