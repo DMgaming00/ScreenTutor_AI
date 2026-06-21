@@ -8,6 +8,7 @@ import {
   drawShapeOnCanvas,
   drawEnhancedPointer,
   clampBubbleToViewport,
+  DRAW_STROKE_MS,
   type PointerTrailPoint,
 } from './overlay-canvas';
 import './AnnotationOverlay.css';
@@ -178,6 +179,7 @@ export default function AnnotationOverlay() {
       startNextMove();
     } else if (event.type === 'clear') {
       shapesRef.current = [];
+      lastPointNormRef.current = null;
     } else if (event.type === 'draw') {
       const anchored = snapShapeToPoint(event.shape, lastPointNormRef.current) ?? event.shape;
       shapesRef.current.push({
@@ -219,6 +221,8 @@ export default function AnnotationOverlay() {
   };
 
   const applyNarrationStep = (stepIndex: number, steps: NarrationStep[]) => {
+    shapesRef.current = [];
+    lastPointNormRef.current = null;
     const display = steps
       .slice(0, stepIndex + 1)
       .map((step) => step.display)
@@ -237,12 +241,7 @@ export default function AnnotationOverlay() {
     if (steps.length === 0) return;
 
     setDisplayedText(steps.map((step) => step.display).filter(Boolean).join('\n'));
-    for (let i = narrationRef.current.stepIndex + 1; i < steps.length; i++) {
-      for (const event of steps[i].events) {
-        applyStreamEvent(event);
-      }
-    }
-    narrationRef.current.stepIndex = steps.length - 1;
+    applyNarrationStep(steps.length - 1, steps);
   };
 
   const startNarration = (spokenText: string, overlayText: string, durationMs: number) => {
@@ -326,7 +325,8 @@ export default function AnnotationOverlay() {
 
     for (const active of shapesRef.current) {
       const fadeT = Math.min(1, (timestamp - active.createdAt) / FADE_IN_MS);
-      drawShapeOnCanvas(ctx, active.shape, W, H, fadeT);
+      const strokeT = Math.min(1, (timestamp - active.createdAt) / DRAW_STROKE_MS);
+      drawShapeOnCanvas(ctx, active.shape, W, H, fadeT, strokeT);
     }
 
     let pointerLabel = pointerLabelRef.current;

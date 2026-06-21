@@ -6,7 +6,7 @@ const MAX_RECT_H = 0.22;
 const MIN_RECT_SIZE = 0.04;
 const MAX_CIRCLE_R = 0.06;
 const MIN_CIRCLE_R = 0.015;
-const MAX_ARROW_SPAN = 0.35;
+const MAX_ARROW_SPAN = 0.5;
 
 function clamp01(n: number): number {
   if (isNaN(n)) return 0;

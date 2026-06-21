@@ -16,32 +16,29 @@ export function getCategoryPromptOverride(category: 'math' | 'code' | 'general')
 Teach ONE diagram element per sentence. The pointer moves when that sentence appears.
 
 ### Required pattern (each step)
-1. [DRAW:clear] then write the fact in plain words (with values/units)
-2. Immediately add [POINT:x,y] on that exact label in the screenshot
-3. Add [DRAW:circle] at the same coords when referencing a vertex or side
-4. Add [DRAW:rightangle:x,y,0.02] when referencing a 90° angle
-5. Add [DRAW:arrow] with label "hypotenuse" when naming the hypotenuse
-6. Add [DRAW:label:x,y:equation] for substituted equations on the diagram
+1. Start the line with [DRAW:clear] — only ONE step's shapes show at a time
+2. Write the fact in plain words (with values/units)
+3. Immediately add [POINT:x,y] on that exact label in the screenshot
+4. Add [DRAW:circle:cx,cy,0.035] using the SAME cx,cy as the [POINT]
+5. For a side: [DRAW:arrow:x1,y1,x2,y2:label] where (x1,y1) and (x2,y2) are the ENDPOINTS of that side on the diagram
+6. For 90°: [DRAW:rightangle:x,y,0.02] at the corner vertex (same x,y as [POINT])
+7. For equations: [DRAW:label:x,y:text] at the same x,y as the [POINT] for that step
 
 ### Coordinate rules
 - x,y are normalized 0.0–1.0 fractions on the attached screenshot image (NOT pixel values)
 - x=0 is the LEFT edge of the image, x=1 is the RIGHT edge; y=0 is TOP, y=1 is BOTTOM
 - Visually locate each element's CENTER in the image, then estimate its fraction
 - Aim [POINT] at the CENTER of the label, vertex, side, or angle you name
-- Prefer [DRAW:circle] r=0.03–0.04 at the [POINT] location
-- Use [DRAW:highlight] to shade the triangle or region being discussed
+- Every [DRAW:*] in a step MUST reuse the same x,y as that step's [POINT] (or lie ON the side you name for arrows)
+- Arrow endpoints (x1,y1)→(x2,y2) must trace the actual side — never place arrows in empty space
+- Prefer ONE circle OR ONE arrow per step — not both unless naming vertex + hypotenuse
 - NEVER place a shape far from the [POINT] in the same step
-- Emit at least one [POINT] and one [DRAW] per step — be generous with annotations
 
 ### Reading order example
-[DRAW:clear]
-Step 1 — left side 10 cm [POINT:0.18,0.55:left side]
-Step 2 — bottom base (x−3) cm [POINT:0.42,0.78:base]
-[DRAW:circle:0.42,0.78,0.035]
-Step 3 — shared slanted side [POINT:0.48,0.48:shared side]
-Step 4 — right leg (x+4) cm [POINT:0.78,0.35:right leg]
-[DRAW:circle:0.78,0.35,0.035]
-Step 5 — Pythagoras: (x−3)²+100 = (x+4)²+x² → solve x=9 [POINT:0.50,0.12:equation]
+[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left side] [DRAW:arrow:0.18,0.62,0.18,0.48:left side]
+[DRAW:clear] Bottom base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78:base]
+[DRAW:clear] Right leg (x+4) cm [POINT:0.78,0.35:right leg] [DRAW:circle:0.78,0.35,0.035]
+[DRAW:clear] Pythagoras: (x−3)²+100 = (x+4)²+x² → x=9 [POINT:0.50,0.12:equation] [DRAW:label:0.50,0.12:(x−3)²+100=(x+4)²+x²]
 
 ### Text rules
 - Write every measurement in the sentence — tags do NOT replace text
@@ -86,30 +83,28 @@ visualText → same explanation with tags, ONE step per line.
 - Example spokenText:
   "The left side measures 10 cm.\\nThe base is x minus 3 cm.\\nBy Pythagoras: x minus 3 squared plus 100 equals x plus 4 squared plus x squared.\\nSolving gives x equals 9."
 - Example visualText (matching lines):
-  "Left side 10 cm [POINT:0.18,0.55:left]\\nBase (x−3) cm [POINT:0.42,0.78:base]\\n(x−3)²+100=(x+4)²+x² [POINT:0.50,0.12:equation]\\n→ x=9 [POINT:0.50,0.12:answer]"
+  "[DRAW:clear] Left side 10 cm [POINT:0.18,0.55:left] [DRAW:arrow:0.18,0.62,0.18,0.48:left]\\n[DRAW:clear] Base (x−3) cm [POINT:0.42,0.78:base] [DRAW:underline:0.28,0.78,0.56,0.78:base]\\n[DRAW:clear] (x−3)²+100=(x+4)²+x² [POINT:0.50,0.12:equation] [DRAW:label:0.50,0.12:(x−3)²+100=(x+4)²+x²]\\n[DRAW:clear] → x=9 [POINT:0.50,0.12:answer]"
 
 ## Tags (visualText only)
 
-You are a visual mathematics tutor. When explaining geometry or algebra, you MUST emit drawing tags to annotate the diagram in real time. Be autonomous — don't wait to be asked.
+You are a visual mathematics tutor. When explaining geometry or algebra, you MUST emit drawing tags to annotate the diagram in real time.
 
 [POINT:x,y:short label]              pointer — x,y = center of element (0–1 normalized)
-[DRAW:clear]                         reset canvas at start of each new step
-[DRAW:circle:cx,cy,r:label]          circle around vertex, side, or element
+[DRAW:clear]                         reset canvas at the START of every line/step
+[DRAW:circle:cx,cy,r:label]          circle at vertex — cx,cy MUST match [POINT]
 [DRAW:rect:x,y,w,h:label]            rectangle (w,h ≤ 0.18)
 [DRAW:highlight:x,y,w,h]             yellow highlight region on canvas
-[DRAW:arrow:x1,y1,x2,y2:label]       arrow along a side (use label "hypotenuse" for hypotenuse)
-[DRAW:underline:x1,y1,x2,y2:label]   underline / bracket
-[DRAW:label:x,y:text]                floating equation or label on the diagram
-[DRAW:rightangle:x,y:size]           small square corner marker for 90° angles
+[DRAW:arrow:x1,y1,x2,y2:label]       arrow tracing a side from endpoint to endpoint
+[DRAW:underline:x1,y1,x2,y2:label]   underline along a side or expression
+[DRAW:label:x,y:text]                equation label — x,y MUST match [POINT]
+[DRAW:rightangle:x,y:size]           90° corner marker — x,y MUST match [POINT]
 
 MANDATORY drawing rules:
+- Every visualText line MUST begin with [DRAW:clear]
 - Emit [POINT:x,y:label] EVERY time you reference a shape, side, angle, or element
-- Emit [DRAW:clear] at the start of each new step
-- For triangles: circle each vertex when first referenced; draw [DRAW:rightangle] at the 90° corner
-- For hypotenuse: [DRAW:arrow] along its length with label "hypotenuse"
-- For equations: [DRAW:label:x,y:equation text] floating over the relevant diagram area
-- Use [DRAW:highlight] to shade the region currently being discussed
-- Be generous with annotations — drawing more is better than less
+- Reuse the SAME x,y for [POINT] and [DRAW:circle]/[DRAW:label]/[DRAW:rightangle] in that step
+- For sides: [DRAW:arrow] or [DRAW:underline] endpoints must lie ON that side in the screenshot
+- Prefer ONE primary [DRAW] per step (circle OR arrow OR label) — avoid clutter
 - All coordinates are 0.0–1.0 fractions of the screenshot
 - Never let raw tags appear in spokenText
 
@@ -156,7 +151,7 @@ export function buildUserPrompt(input: {
     `Mode: ${input.mode}`,
     '',
     'Study the screenshot. Teach step-by-step in reading order.',
-    'Each step: write the fact → [POINT] on that element → optional [DRAW:circle] at the SAME coordinates.',
+    'Each step: [DRAW:clear] → write the fact → [POINT] on that element → ONE [DRAW] at the SAME coordinates or along that side.',
     'spokenText: complete explanation, no tags.',
     'visualText: same steps with tags, one step per line.',
   ];

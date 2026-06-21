@@ -2,6 +2,11 @@ import type { CanvasDrawShape } from '@screentutor/shared';
 
 const POINTER_OUTER_R = 14;
 const ARRIVAL_BURST_MS = 400;
+export const DRAW_STROKE_MS = 450;
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 export function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
   const dpr = window.devicePixelRatio || 1;
@@ -70,8 +75,10 @@ export function drawShapeOnCanvas(
   shape: CanvasDrawShape,
   W: number,
   H: number,
-  alpha: number
+  alpha: number,
+  progress = 1
 ) {
+  const t = easeOutCubic(Math.max(0, Math.min(1, progress)));
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.lineCap = 'round';
@@ -83,50 +90,73 @@ export function drawShapeOnCanvas(
 
   switch (shape.kind) {
     case 'circle': {
+      const cx = a * W;
+      const cy = b * H;
+      const r = c * minDim;
       ctx.strokeStyle = 'rgba(59, 139, 212, 0.92)';
       ctx.fillStyle = 'rgba(59, 139, 212, 0.12)';
       ctx.lineWidth = 2.5;
       ctx.shadowColor = 'rgba(59, 139, 212, 0.5)';
       ctx.beginPath();
-      ctx.arc(a * W, b * H, c * minDim, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r * t, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
       ctx.stroke();
-      if (shape.label) drawCanvasLabel(ctx, a * W, b * H - c * minDim, shape.label);
+      if (t > 0.85 && shape.label) drawCanvasLabel(ctx, cx, cy - r, shape.label, { alpha: (t - 0.85) / 0.15 });
       break;
     }
     case 'rect': {
+      const fullW = c * W;
+      const fullH = d * H;
+      const cx = (a + c / 2) * W;
+      const cy = (b + d / 2) * H;
+      const w = fullW * t;
+      const h = fullH * t;
       ctx.strokeStyle = 'rgba(59, 139, 212, 0.92)';
       ctx.fillStyle = 'rgba(59, 139, 212, 0.15)';
       ctx.lineWidth = 2.5;
       ctx.shadowColor = 'rgba(59, 139, 212, 0.5)';
       ctx.beginPath();
-      ctx.roundRect(a * W, b * H, c * W, d * H, 6);
+      ctx.roundRect(cx - w / 2, cy - h / 2, w, h, 6);
       ctx.stroke();
       ctx.fill();
       break;
     }
     case 'highlight': {
-      ctx.fillStyle = 'rgba(255, 220, 0, 0.22)';
+      const fullW = c * W;
+      const fullH = d * H;
+      const cx = (a + c / 2) * W;
+      const cy = (b + d / 2) * H;
+      ctx.fillStyle = `rgba(255, 220, 0, ${0.22 * t})`;
       ctx.shadowColor = 'rgba(255, 200, 0, 0.3)';
       ctx.shadowBlur = 6;
-      ctx.fillRect(a * W, b * H, c * W, d * H);
+      ctx.fillRect(cx - (fullW * t) / 2, cy - (fullH * t) / 2, fullW * t, fullH * t);
       break;
     }
     case 'underline': {
+      const x1 = a * W;
+      const y1 = b * H;
+      const endX = c * W;
+      const endY = d * H;
+      const x2 = x1 + (endX - x1) * t;
+      const y2 = y1 + (endY - y1) * t;
       ctx.strokeStyle = 'rgba(59, 139, 212, 0.92)';
       ctx.lineWidth = 3;
       ctx.shadowColor = 'rgba(59, 139, 212, 0.5)';
       ctx.beginPath();
-      ctx.moveTo(a * W, b * H);
-      ctx.lineTo(c * W, d * H);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
-      if (shape.label) drawCanvasLabel(ctx, ((a + c) / 2) * W, b * H, shape.label);
+      if (t > 0.85 && shape.label) {
+        drawCanvasLabel(ctx, (x1 + x2) / 2, y1, shape.label, { alpha: (t - 0.85) / 0.15 });
+      }
       break;
     }
     case 'arrow': {
       const x1 = a * W;
       const y1 = b * H;
-      const x2 = c * W;
-      const y2 = d * H;
+      const endX = c * W;
+      const endY = d * H;
+      const x2 = x1 + (endX - x1) * t;
+      const y2 = y1 + (endY - y1) * t;
       const angle = Math.atan2(y2 - y1, x2 - x1);
       const headLen = 18;
       const isHypotenuse = /hypot/i.test(shape.label ?? '');
@@ -137,30 +167,42 @@ export function drawShapeOnCanvas(
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(
-        x2 - headLen * Math.cos(angle - Math.PI / 7),
-        y2 - headLen * Math.sin(angle - Math.PI / 7)
-      );
-      ctx.lineTo(
-        x2 - headLen * Math.cos(angle + Math.PI / 7),
-        y2 - headLen * Math.sin(angle + Math.PI / 7)
-      );
-      ctx.closePath();
-      ctx.fillStyle = ctx.strokeStyle as string;
-      ctx.fill();
-      if (shape.label) drawCanvasLabel(ctx, (x1 + x2) / 2, (y1 + y2) / 2, shape.label);
+      if (t > 0.75) {
+        const headT = (t - 0.75) / 0.25;
+        ctx.globalAlpha = alpha * headT;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(
+          x2 - headLen * Math.cos(angle - Math.PI / 7),
+          y2 - headLen * Math.sin(angle - Math.PI / 7)
+        );
+        ctx.lineTo(
+          x2 - headLen * Math.cos(angle + Math.PI / 7),
+          y2 - headLen * Math.sin(angle + Math.PI / 7)
+        );
+        ctx.closePath();
+        ctx.fillStyle = ctx.strokeStyle as string;
+        ctx.fill();
+      }
+      if (t > 0.85 && shape.label) {
+        drawCanvasLabel(ctx, (x1 + x2) / 2, (y1 + y2) / 2, shape.label, { alpha: (t - 0.85) / 0.15 });
+      }
       break;
     }
     case 'label': {
       const text = shape.label ?? '';
       const equation = /[=²√^+\-*/()]/.test(text);
-      drawCanvasLabel(ctx, a * W, b * H, text, { equation });
+      const scale = 0.92 + 0.08 * t;
+      ctx.save();
+      ctx.translate(a * W, b * H);
+      ctx.scale(scale, scale);
+      ctx.translate(-a * W, -b * H);
+      drawCanvasLabel(ctx, a * W, b * H, text, { equation, alpha: t });
+      ctx.restore();
       break;
     }
     case 'rightangle': {
-      const size = (c ?? 0.02) * minDim;
+      const size = (c ?? 0.02) * minDim * t;
       const px = a * W;
       const py = b * H;
       ctx.strokeStyle = 'rgba(59, 139, 212, 0.95)';

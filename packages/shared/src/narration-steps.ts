@@ -17,10 +17,16 @@ function splitLines(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Ensure each step begins with a canvas reset so shapes do not pile up. */
+function ensureStepClear(segment: string): string {
+  if (/\[DRAW:clear\]/i.test(segment)) return segment;
+  return `[DRAW:clear] ${segment}`;
+}
+
 /** Align spoken + overlay lines into narration beats for synced reveal. */
 export function buildNarrationSteps(spokenText: string, overlayText: string): NarrationStep[] {
   const spokenLines = splitLines(spokenText);
-  const overlayLines = splitLines(overlayText.replace(/\[DRAW:clear\]/gi, '').trim());
+  const overlayLines = splitLines(overlayText);
 
   if (spokenLines.length === 0 && overlayLines.length === 0) {
     return [];
@@ -31,7 +37,9 @@ export function buildNarrationSteps(spokenText: string, overlayText: string): Na
 
   for (let i = 0; i < lineCount; i++) {
     const spoken = spokenLines[i] ?? spokenLines[spokenLines.length - 1] ?? spokenText.trim();
-    const overlaySegment = overlayLines[i] ?? overlayLines[overlayLines.length - 1] ?? overlayText.trim();
+    const overlaySegment = ensureStepClear(
+      overlayLines[i] ?? overlayLines[overlayLines.length - 1] ?? overlayText.trim()
+    );
     const { visibleText, events } = parseStreamTags(overlaySegment);
 
     steps.push({

@@ -4,6 +4,9 @@ import { sanitizeDrawShape } from './draw-shape-sanitize.js';
 const POINT_INNER = /\[POINT:([^\]]+)\]/i;
 const DRAW_INNER = /\[DRAW:([^\]]+)\]/gi;
 
+const ANCHOR_DRIFT = 0.07;
+const MAX_SNAPPED_SPAN = 0.45;
+
 function parsePointCoords(content: string): { x: number; y: number } | null {
   const trimmed = content.trim();
   if (trimmed.toLowerCase() === 'none') return null;
@@ -39,6 +42,39 @@ function dist(a: { x: number; y: number }, b: { x: number; y: number }): number 
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function clamp01(n: number): number {
+  if (isNaN(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+/** Snap a line segment (arrow/underline) so it passes through the anchor point. */
+function snapLineToPoint(
+  shape: CanvasDrawShape,
+  point: { x: number; y: number }
+): CanvasDrawShape {
+  const [x1, y1, x2, y2] = shape.coords;
+  const centerDrift = dist({ x: (x1 + x2) / 2, y: (y1 + y2) / 2 }, point);
+
+  const len = Math.hypot(x2 - x1, y2 - y1) || 0.08;
+  const dirX = (x2 - x1) / len;
+  const dirY = (y2 - y1) / len;
+
+  if (centerDrift <= ANCHOR_DRIFT) {
+    return shape;
+  }
+
+  const half = Math.min(len / 2, MAX_SNAPPED_SPAN / 2);
+  return {
+    ...shape,
+    coords: [
+      clamp01(point.x - dirX * half),
+      clamp01(point.y - dirY * half),
+      clamp01(point.x + dirX * half),
+      clamp01(point.y + dirY * half),
+    ],
+  };
+}
+
 /** Prefer a tight circle at the anchor point instead of a misplaced box. */
 export function snapShapeToPoint(
   shape: CanvasDrawShape,
@@ -67,6 +103,21 @@ export function snapShapeToPoint(
     const px = Math.max(0, Math.min(1 - w, point.x - w / 2));
     const py = Math.max(0, Math.min(1 - h, point.y - h / 2));
     return { ...sanitized, coords: [px, py, w, h] };
+  }
+
+  if (sanitized.kind === 'arrow' || sanitized.kind === 'underline') {
+    return snapLineToPoint(sanitized, point);
+  }
+
+  if (sanitized.kind === 'label') {
+    if (drift > ANCHOR_DRIFT) {
+      return { ...sanitized, coords: [point.x, Math.max(0.04, point.y - 0.05)] };
+    }
+    return sanitized;
+  }
+
+  if (sanitized.kind === 'rightangle') {
+    return { ...sanitized, coords: [point.x, point.y, sanitized.coords[2]] };
   }
 
   return sanitized;

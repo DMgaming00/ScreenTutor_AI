@@ -15,8 +15,15 @@ describe('buildNarrationSteps', () => {
     expect(steps[2].display).toContain('x=9');
   });
 
-  it('returns empty for blank input', () => {
-    expect(buildNarrationSteps('', '')).toEqual([]);
+  it('prepends [DRAW:clear] to each step when missing', () => {
+    const spoken = 'Side A.\nSide B.';
+    const overlay =
+      'Side A [POINT:0.2,0.5:a]\nSide B [POINT:0.8,0.5:b]';
+
+    const steps = buildNarrationSteps(spoken, overlay);
+    expect(steps).toHaveLength(2);
+    expect(steps[0].events[0]).toMatchObject({ type: 'clear' });
+    expect(steps[1].events[0]).toMatchObject({ type: 'clear' });
   });
 });
 
