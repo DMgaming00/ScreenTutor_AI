@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'services/*'
+  - 'apps/*'
+allowBuilds:
+  esbuild: true
+  electron: true
+minimumReleaseAgeExclude:
+  - electron@42.4.1

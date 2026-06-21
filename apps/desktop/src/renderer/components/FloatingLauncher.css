@@ -1,0 +1,81 @@
+.floating-launcher {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  padding: 4px;
+}
+
+.launcher-btn {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 28, 0.92);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 20px rgba(59, 130, 246, 0.15);
+  transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.launcher-btn:hover {
+  transform: scale(1.06);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 0 28px rgba(59, 130, 246, 0.25);
+}
+
+.launcher-btn:active {
+  transform: scale(0.96);
+}
+
+.launcher-btn.expanded {
+  width: 44px;
+  height: 44px;
+  background: rgba(20, 20, 20, 0.85);
+}
+
+.launcher-btn.recording,
+.launcher-btn.state-listening {
+  border-color: rgba(139, 92, 246, 0.6);
+  animation: launcher-pulse 1.2s ease-in-out infinite;
+}
+
+.launcher-btn.speaking,
+.launcher-btn.state-responding {
+  border-color: rgba(59, 130, 246, 0.7);
+  animation: launcher-pulse 0.9s ease-in-out infinite;
+}
+
+.launcher-btn.state-thinking {
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+.launcher-btn.state-error {
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.launcher-btn.state-privacy {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.launcher-activity-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 130, 246, 0.45);
+  animation: launcher-ring 1.4s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes launcher-pulse {
+  0%, 100% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(59, 130, 246, 0.2); }
+  50% { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 28px rgba(59, 130, 246, 0.45); }
+}
+
+@keyframes launcher-ring {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.25); opacity: 0; }
+}

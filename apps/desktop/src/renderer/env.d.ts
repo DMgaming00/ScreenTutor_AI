@@ -1,0 +1,42 @@
+export {};
+
+declare global {
+  interface ElectronAPI {
+    captureScreen: () => Promise<any>;
+    sendDrawings: (drawings: any[]) => void;
+    clearOverlay: () => void;
+    restoreExplanation: (payload: import('./types/explanation').OverlayExplanationPayload) => void;
+    notifyExplanationReady: (payload: { anchorX: number; anchorY: number; text: string }) => void;
+    notifyExplanationMinimized: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void;
+    notifyExplanationUpdated: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void;
+    togglePrivacyMode: () => Promise<boolean>;
+    getPrivacyMode: () => Promise<boolean>;
+    onScreenCaptured: (callback: (data: any) => void) => void;
+    onHotkeyTriggered: (callback: () => void) => void;
+    onOverlayDrawings: (callback: (drawings: any[]) => void) => void;
+    onOverlayPoint: (callback: (data: { pointTarget: any; text: string }) => void) => void;
+    onOverlayClear: (callback: () => void) => void;
+    onRestoreExplanation: (callback: (payload: import('./types/explanation').OverlayExplanationPayload) => void) => void;
+    onExplanationReady: (callback: (payload: { anchorX: number; anchorY: number; text: string }) => void) => void;
+    onExplanationMinimized: (callback: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void) => void;
+    onExplanationUpdated: (callback: (payload: { anchorX: number; anchorY: number; dragOffsetX: number; dragOffsetY: number; text: string }) => void) => void;
+    setMainSize: (width: number, height: number) => void;
+    startOverlayNarration: (payload: { spokenText: string; overlayText: string; durationMs: number }) => void;
+    finishOverlayNarration: () => void;
+    onOverlayNarrationStart: (callback: (payload: { spokenText: string; overlayText: string; durationMs: number }) => void) => void;
+    onOverlayNarrationFinish: (callback: () => void) => void;
+    flyToPoint: (x: number, y: number, screenNumber?: number, text?: string) => void;
+    getSentryConfig: () => Promise<{ enabled: boolean; dsn: string }>;
+    simulateOverlayError: () => void;
+    onTriggerOverlayError: (callback: () => void) => void;
+    getActiveWindowTitle: () => Promise<string | null>;
+    setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
+    onCursorMove: (callback: (point: { x: number; y: number }) => void) => void;
+    onFlyToPoint: (callback: (point: { x: number; y: number }) => void) => void;
+    logToServer: (message: string) => void;
+  }
+
+  interface Window {
+    electronAPI: ElectronAPI;
+  }
+}

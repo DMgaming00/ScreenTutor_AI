@@ -1,0 +1,342 @@
+import { patchConsole, mapCoordinatesToGlobal } from '@screentutor/shared';
+patchConsole();
+
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { join } from 'path';
+import { is } from '@electron-toolkit/utils';
+import { captureScreen, updateCapturedDisplays, capturedDisplays } from './screenshot.js';
+import { isWindowDenied, togglePrivacyMode, getPrivacyMode, getActiveWindowTitle } from './privacy.js';
+import { registerShortcuts, unregisterShortcuts } from './shortcuts.js';
+import * as Sentry from '@sentry/node';
+import { initSentry } from './sentry.js';
+
+// Initialize Sentry crash reporting
+initSentry();
+
+let mainWindow: BrowserWindow;
+let overlayWindow: BrowserWindow;
+
+const TOPMOST_LEVEL = 'screen-saver' as const;
+const PANEL_WIDTH = 380;
+const PANEL_HEIGHT = 580;
+const COLLAPSED_SIZE = 56;
+const WINDOW_MARGIN = 16;
+
+function positionPanel(width: number, height: number) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay();
+  const { x, y, width: workW, height: workH } = display.workArea;
+
+  const winWidth = width;
+  const winHeight = height > 0 ? height : width;
+
+  mainWindow.setBounds(
+    {
+      x: x + workW - winWidth - WINDOW_MARGIN,
+      y: y + workH - winHeight - WINDOW_MARGIN,
+      width: winWidth,
+      height: winHeight,
+    },
+    true
+  );
+}
+
+function raiseMainWindow(focus = false) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+  mainWindow.show();
+  if (focus) {
+    mainWindow.focus();
+    // Windows can demote z-order on focus; re-assert after focus.
+    mainWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+  }
+}
+
+function raiseOverlayWindow() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  overlayWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+}
+
+function createWindow() {
+  try {
+    mainWindow = new BrowserWindow({
+      width: COLLAPSED_SIZE,
+      height: COLLAPSED_SIZE,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      resizable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false,
+      },
+    });
+
+    mainWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+    mainWindow.once('ready-to-show', () => {
+      positionPanel(COLLAPSED_SIZE, COLLAPSED_SIZE);
+      mainWindow.showInactive();
+      raiseMainWindow();
+    });
+
+    mainWindow.on('blur', () => {
+      const bounds = mainWindow.getBounds();
+      if (bounds.width > COLLAPSED_SIZE || bounds.height > COLLAPSED_SIZE) {
+        raiseMainWindow();
+      }
+    });
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/index.html');
+    } else {
+      mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    }
+  } catch (error) {
+    Sentry.captureException(error);
+    console.error('Failed to create main window:', error);
+  }
+}
+
+function createOverlay() {
+  try {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x, y, width, height } = primaryDisplay.bounds;
+
+    overlayWindow = new BrowserWindow({
+      x,
+      y,
+      width,
+      height,
+      transparent: true,
+      frame: false,
+      hasShadow: false,
+      alwaysOnTop: true,
+      focusable: false,
+      resizable: false,
+      skipTaskbar: true,
+      show: false, // Prevent flashing, show once ready-to-show fires
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false,
+        backgroundThrottling: false,
+      },
+    });
+
+    overlayWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+    overlayWindow.setIgnoreMouseEvents(true); // fully click-through
+
+    overlayWindow.once('ready-to-show', () => {
+      console.log('[Main] overlayWindow ready-to-show; calling showInactive()');
+      overlayWindow.showInactive();
+    });
+
+    overlayWindow.webContents.on('did-finish-load', () => {
+      console.log('[Main] overlayWindow did-finish-load');
+    });
+
+    overlayWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error(`[Main] overlayWindow did-fail-load: ${errorCode} - ${errorDescription}`);
+    });
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      overlayWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + '/overlay.html');
+    } else {
+      overlayWindow.loadFile(join(__dirname, '../renderer/overlay.html'));
+    }
+  } catch (error) {
+    Sentry.captureException(error);
+    console.error('Failed to create overlay window:', error);
+  }
+}
+
+app.whenReady().then(() => {
+  try {
+    updateCapturedDisplays();
+    createWindow();
+    createOverlay();
+
+    let isShortcutCooldown = false;
+    registerShortcuts(async () => {
+      if (isShortcutCooldown) return;
+      isShortcutCooldown = true;
+      setTimeout(() => {
+        isShortcutCooldown = false;
+      }, 1000);
+
+      console.log('Shortcut triggered: notifying renderer');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        raiseMainWindow(true);
+        mainWindow.webContents.send('onHotkeyTriggered');
+      }
+    });
+
+    console.log('ScreenTutor AI Started');
+  } catch (error) {
+    Sentry.captureException(error);
+    console.error('App ready startup failure:', error);
+  }
+});
+
+app.on('will-quit', () => {
+  unregisterShortcuts();
+});
+
+// IPC Handlers
+ipcMain.handle('capture-screen', async () => {
+  return await captureScreen();
+});
+
+ipcMain.on('send-drawings', (event, drawings) => {
+  console.log(`[Main] IPC "send-drawings" received with ${drawings?.length} command(s)`);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    console.log(`[Main] Forwarding ${drawings?.length} drawing command(s) to overlayWindow`);
+    raiseOverlayWindow();
+    overlayWindow.webContents.send('onOverlayDrawings', drawings);
+  } else {
+    console.warn(`[Main] Cannot forward drawings: overlayWindow is ${overlayWindow ? 'destroyed' : 'null'}`);
+  }
+});
+
+ipcMain.on('send-overlay-point', (event, data) => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onOverlayPoint', data);
+  }
+});
+
+ipcMain.on('clear-overlay', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onOverlayClear');
+  }
+});
+
+ipcMain.on('restore-explanation', (_event, payload) => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    raiseOverlayWindow();
+    overlayWindow.webContents.send('onRestoreExplanation', payload);
+  }
+});
+
+ipcMain.on('explanation-ready', (_event, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('onExplanationReady', payload);
+  }
+});
+
+ipcMain.on('explanation-minimized', (_event, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('onExplanationMinimized', payload);
+  }
+});
+
+ipcMain.on('explanation-updated', (_event, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('onExplanationUpdated', payload);
+  }
+});
+
+ipcMain.on('log-to-server', (event, message) => {
+  console.log(`[Renderer LOG] ${message}`);
+});
+
+ipcMain.handle('toggle-privacy-mode', () => {
+  return togglePrivacyMode();
+});
+
+ipcMain.handle('get-privacy-mode', () => {
+  return getPrivacyMode();
+});
+
+ipcMain.on('set-main-size', (_event, width, height) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const panelHeight = height > 0 ? height : width;
+    positionPanel(width, panelHeight);
+    if (width > COLLAPSED_SIZE || panelHeight > COLLAPSED_SIZE) {
+      raiseMainWindow(true);
+    } else {
+      raiseOverlayWindow();
+      raiseMainWindow();
+    }
+  }
+});
+
+ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) {
+    win.setIgnoreMouseEvents(ignore, options);
+  }
+});
+
+ipcMain.on('start-overlay-narration', (_event, payload) => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onOverlayNarrationStart', payload);
+  }
+});
+
+ipcMain.on('finish-overlay-narration', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('onOverlayNarrationFinish');
+  }
+});
+
+ipcMain.on('fly-to-point', (event, x, y, screenNumber, text) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // Ensure display cache has been populated
+    if (capturedDisplays.length === 0) {
+      updateCapturedDisplays();
+    }
+
+    const mapped = mapCoordinatesToGlobal({
+      x,
+      y,
+      screenNumber,
+      displays: capturedDisplays
+    });
+
+    if (!mapped) {
+      console.warn('fly-to-point: No target display identified.');
+      return;
+    }
+
+    const { globalX, globalY, targetDisplay } = mapped;
+
+    // DEBUG_COORDINATES logging
+    const debugCoordinates = process.env.DEBUG_COORDINATES === 'true';
+    if (debugCoordinates) {
+      console.log(`[DEBUG_COORDINATES] fly-to-point triggered: x=${x}, y=${y}, screenNumber=${screenNumber}`);
+      console.log(`[DEBUG_COORDINATES] Target display selected: screenNumber=${targetDisplay.screenNumber}, isCursor=${targetDisplay.isCursorDisplay}`);
+      console.log(`[DEBUG_COORDINATES] Display geometry: width=${targetDisplay.displayWidth}, height=${targetDisplay.displayHeight}, scaleFactor=${targetDisplay.displayScaleFactor}`);
+      console.log(`[DEBUG_COORDINATES] Global screen coordinates: x=${globalX}, y=${globalY}`);
+    }
+
+    const primaryBounds = screen.getPrimaryDisplay().bounds;
+    const relX = globalX - primaryBounds.x;
+    const relY = globalY - primaryBounds.y;
+
+    // mainWindow.webContents.send('onFlyToPoint', { x: relX, y: relY });
+    
+    if (overlayWindow && !overlayWindow.isDestroyed() && text !== undefined) {
+      overlayWindow.webContents.send('onOverlayPoint', { pointTarget: { x: relX, y: relY }, text });
+    }
+  }
+});
+
+ipcMain.handle('get-sentry-config', () => {
+  return {
+    enabled: process.env.SENTRY_ENABLED === 'true',
+    dsn: process.env.SENTRY_DSN || ''
+  };
+});
+
+ipcMain.on('simulate-overlay-error', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.webContents.send('trigger-overlay-error');
+  }
+});
+
+ipcMain.handle('get-active-window-title', async () => {
+  return await getActiveWindowTitle();
+});
