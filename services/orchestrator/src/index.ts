@@ -64,9 +64,12 @@ let browserbaseInstance: BrowserbaseIntegration | null = null;
 async function getBrowserbase(): Promise<BrowserbaseIntegration> {
   if (!browserbaseInstance) {
     const { BrowserbaseService, MockBrowserbaseService } = await import('./integrations/browserbase.js');
-    browserbaseInstance = (config.BROWSERBASE_ENABLED && config.BROWSERBASE_API_KEY)
-      ? new BrowserbaseService(config.BROWSERBASE_API_KEY, config.BROWSERBASE_PROJECT_ID)
-      : new MockBrowserbaseService();
+    if (config.BROWSERBASE_ENABLED && config.BROWSERBASE_API_KEY) {
+      const mem = await getMemory();
+      browserbaseInstance = new BrowserbaseService(config.BROWSERBASE_API_KEY, config.BROWSERBASE_PROJECT_ID, mem);
+    } else {
+      browserbaseInstance = new MockBrowserbaseService();
+    }
   }
   return browserbaseInstance;
 }

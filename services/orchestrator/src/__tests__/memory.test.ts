@@ -72,4 +72,10 @@ describe('InMemoryService', () => {
     expect(profile.weakConcepts.length).toBe(0);
     expect(profile.strongConcepts).toContain('trig');
   });
+
+  it('stores and retrieves semantic cache entries with TTL', async () => {
+    await memory.semanticCacheSet('demo:key', '{"value":42}', 3600);
+    const hit = await memory.semanticCacheGet('demo:key');
+    expect(hit).toBe('{"value":42}');
+  });
 });

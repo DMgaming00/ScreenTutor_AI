@@ -12,7 +12,7 @@ import {
   type CaptureResult,
 } from './screenshot.js';
 import { isWindowDenied, togglePrivacyMode, getPrivacyMode, getActiveWindowTitle } from './privacy.js';
-import { registerShortcuts, unregisterShortcuts } from './shortcuts.js';
+import { registerHoldDictationShortcuts, unregisterHoldDictationShortcuts } from './shortcuts.js';
 import * as Sentry from '@sentry/node';
 import { initSentry } from './sentry.js';
 
@@ -72,6 +72,30 @@ function positionOverlayOnDisplay(display: {
     height: display.displayHeight,
   });
   raiseOverlayWindow();
+}
+
+function setDictationGlow(active: boolean) {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    raiseOverlayWindow();
+    overlayWindow.webContents.send('onDictationGlow', { active });
+  }
+}
+
+function notifyHoldDictationStart() {
+  console.log('[Main] Hold dictation started');
+  setDictationGlow(true);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    raiseMainWindow(false);
+    mainWindow.webContents.send('onHoldDictationStart');
+  }
+}
+
+function notifyHoldDictationEnd() {
+  console.log('[Main] Hold dictation ended');
+  setDictationGlow(false);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('onHoldDictationEnd');
+  }
 }
 
 function syncOverlayToCapture(capture: CaptureResult) {
@@ -192,20 +216,7 @@ app.whenReady().then(() => {
     createWindow();
     createOverlay();
 
-    let isShortcutCooldown = false;
-    registerShortcuts(async () => {
-      if (isShortcutCooldown) return;
-      isShortcutCooldown = true;
-      setTimeout(() => {
-        isShortcutCooldown = false;
-      }, 1000);
-
-      console.log('Shortcut triggered: notifying renderer');
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        raiseMainWindow(true);
-        mainWindow.webContents.send('onHotkeyTriggered');
-      }
-    });
+    void registerHoldDictationShortcuts(notifyHoldDictationStart, notifyHoldDictationEnd);
 
     console.log('ScreenTutor AI Started');
   } catch (error) {
@@ -215,7 +226,7 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
-  unregisterShortcuts();
+  unregisterHoldDictationShortcuts();
 });
 
 // IPC Handlers
@@ -225,6 +236,10 @@ ipcMain.handle('capture-screen', async () => {
     syncOverlayToCapture(result);
   }
   return result;
+});
+
+ipcMain.on('set-dictation-glow', (_event, active: boolean) => {
+  setDictationGlow(!!active);
 });
 
 ipcMain.on('send-drawings', (event, drawings) => {

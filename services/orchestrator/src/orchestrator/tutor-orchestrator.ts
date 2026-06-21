@@ -5,11 +5,19 @@ import type { AgentRouter } from '../agents/agent-router.js';
 import type { BrowserbaseIntegration } from '../integrations/browserbase.js';
 import type { SimularIntegration } from '../integrations/simular.js';
 import type { ObservabilityService } from '../observability/observability-service.js';
+import {
+  SemanticCache,
+  buildTutorResponseCacheKey,
+  hashScreenshot,
+  sanitizeResponseForCache,
+} from '../cache/semantic-cache.js';
 import { config } from '../config.js';
 import { privacyGuard, PrivacyBlockedError } from '../privacy/privacy-guard.js';
 import * as Sentry from '@sentry/node';
 
 export class TutorOrchestrator {
+  private semanticCache: SemanticCache;
+
   constructor(
     private aiProvider: AIProvider,
     private memory: MemoryService,
@@ -17,7 +25,9 @@ export class TutorOrchestrator {
     private browserbase: BrowserbaseIntegration,
     private simular: SimularIntegration,
     private observability: ObservabilityService
-  ) {}
+  ) {
+    this.semanticCache = new SemanticCache(memory, config.SEMANTIC_CACHE_ENABLED);
+  }
 
   async handleQuestion(input: TutorInput, onDelta?: (text: string) => void): Promise<TutorResponse> {
     return Sentry.startSpan({ name: 'tutor.ask', op: 'http' }, async () => {
@@ -118,41 +128,86 @@ export class TutorOrchestrator {
           recentTurnsCount: input.recentTurns?.length || 0
         });
 
+        const screenshotHash = hashScreenshot(input.screenshotBase64);
+        const weakConceptNames = (profile.weakConcepts || []).map((c) => c.concept);
+        const canUseSemanticCache =
+          config.SEMANTIC_CACHE_ENABLED &&
+          !input.privacyMode &&
+          !(input.recentTurns && input.recentTurns.length > 0);
+
+        let response: TutorResponse;
+        let fromCache = false;
+
+        if (canUseSemanticCache) {
+          const cacheKey = buildTutorResponseCacheKey(input, screenshotHash, weakConceptNames);
+          const cached = await this.semanticCache.get<TutorResponse>(cacheKey);
+          if (cached) {
+            response = { ...cached, mode: input.mode };
+            fromCache = true;
+            this.observability.recordEvent(traceId, 'SemanticCacheHit', {
+              cacheKeyPrefix: cacheKey.slice(0, 20),
+            });
+          }
+        }
+
         // 4. AgentRouting
         this.observability.addSpan(traceId, 'AgentRouting');
         const routingDecision = await this.agentRouter.route(input, traceId);
-        this.agentRouter.logRoutingDecision(input, routingDecision.selectedAgent, routingDecision.reason);
-        this.observability.recordEvent(traceId, 'AgentRouted', {
-          selectedAgent: routingDecision.selectedAgent,
-          routingReason: routingDecision.reason
-        });
 
-        // 5. ClaudeModelCall / Agent Execution
-        this.observability.addSpan(traceId, 'ClaudeModelCall', {
-          selectedAgent: routingDecision.selectedAgent
-        });
-        const aiSpan = Sentry.startInactiveSpan({ name: 'claude-vision', op: 'ai' });
-        let agentOutput;
-        try {
-          agentOutput = await this.agentRouter.callAgent(routingDecision.selectedAgent, input, onDelta, traceId);
-        } catch (err) {
-          Sentry.captureException(err);
+        if (!fromCache) {
+          this.agentRouter.logRoutingDecision(input, routingDecision.selectedAgent, routingDecision.reason);
+          this.observability.recordEvent(traceId, 'AgentRouted', {
+            selectedAgent: routingDecision.selectedAgent,
+            routingReason: routingDecision.reason
+          });
+
+          // 5. ClaudeModelCall / Agent Execution
+          this.observability.addSpan(traceId, 'ClaudeModelCall', {
+            selectedAgent: routingDecision.selectedAgent
+          });
+          const aiSpan = Sentry.startInactiveSpan({ name: 'claude-vision', op: 'ai' });
+          let agentOutput;
+          try {
+            agentOutput = await this.agentRouter.callAgent(routingDecision.selectedAgent, input, onDelta, traceId);
+          } catch (err) {
+            Sentry.captureException(err);
+            aiSpan?.end();
+            throw err;
+          }
+          response = await this.agentRouter.combineOutputs([agentOutput]);
           aiSpan?.end();
-          throw err;
+          this.observability.recordEvent(traceId, 'ClaudeModelCallCompleted');
+
+          if (canUseSemanticCache) {
+            const cacheKey = buildTutorResponseCacheKey(input, screenshotHash, weakConceptNames);
+            await this.semanticCache.set(
+              cacheKey,
+              sanitizeResponseForCache(response),
+              config.TUTOR_CACHE_TTL_SECONDS
+            );
+            this.observability.recordEvent(traceId, 'SemanticCacheSet', {
+              cacheKeyPrefix: cacheKey.slice(0, 20),
+            });
+          }
+        } else {
+          this.observability.recordEvent(traceId, 'AgentRouted', {
+            selectedAgent: response.routingDecision?.selectedAgent || routingDecision.selectedAgent,
+            routingReason: response.routingDecision?.reason || routingDecision.reason,
+            fromCache: true,
+          });
         }
-        let response = await this.agentRouter.combineOutputs([agentOutput]);
-        aiSpan?.end();
-        this.observability.recordEvent(traceId, 'ClaudeModelCallCompleted');
 
         // Set response mode to match request mode
         response.mode = input.mode;
 
         // Attach routing decision to response metadata for the developer debug panel
-        response.routingDecision = {
-          selectedAgent: routingDecision.selectedAgent,
-          reason: routingDecision.reason,
-          provider: routingDecision.provider
-        };
+        if (!response.routingDecision) {
+          response.routingDecision = {
+            selectedAgent: routingDecision.selectedAgent,
+            reason: routingDecision.reason,
+            provider: routingDecision.provider
+          };
+        }
 
         // 6. PointTagParsing & CoordinateMapping
         this.observability.addSpan(traceId, 'PointTagParsing');
@@ -265,10 +320,10 @@ export class TutorOrchestrator {
             });
 
             // Compute screenshot hash if present
-            let screenshotHash = undefined;
-            if (input.screenshotBase64) {
+            let turnScreenshotHash = screenshotHash;
+            if (!turnScreenshotHash && input.screenshotBase64) {
               const crypto = await import('crypto');
-              screenshotHash = crypto.createHash('md5').update(input.screenshotBase64).digest('hex');
+              turnScreenshotHash = crypto.createHash('md5').update(input.screenshotBase64).digest('hex');
             }
 
             // Append unified session turn
@@ -283,8 +338,8 @@ export class TutorOrchestrator {
               hintLevel: input.mode === 'hint' ? (response.hints?.length || 0) : undefined,
               quizOutcome: undefined,
               pointTargetValid: !!(response.pointTarget && response.pointTarget.x !== null),
-              provider: response.provider || 'mock',
-              screenshotHash
+              provider: fromCache ? `${response.provider || 'mock'}_cached` : (response.provider || 'mock'),
+              screenshotHash: turnScreenshotHash
             };
             await this.memory.appendSessionTurn(input.sessionId, turn);
           } catch (memErr) {
@@ -314,7 +369,8 @@ export class TutorOrchestrator {
           pointTagValid: evaluations['point_tag_valid']?.passed,
           drawingCount: response.drawings?.length || 0,
           responseLength: (response.spokenText || '').length,
-          hintRevealedAnswer: !evaluations['hint_did_not_reveal_full_answer']?.passed
+          hintRevealedAnswer: !evaluations['hint_did_not_reveal_full_answer']?.passed,
+          semanticCacheHit: fromCache,
         });
 
         response.observability = {

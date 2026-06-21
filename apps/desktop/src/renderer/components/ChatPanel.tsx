@@ -91,6 +91,53 @@ export default function ChatPanel({
   const [practiceProblem, setPracticeProblem] = useState<string | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [confirmOpenUrl, setConfirmOpenUrl] = useState<string | null>(null);
+  const micHoldingRef = useRef(false);
+  const micReleaseCleanupRef = useRef<(() => void) | null>(null);
+
+  const clearMicReleaseListeners = () => {
+    micReleaseCleanupRef.current?.();
+    micReleaseCleanupRef.current = null;
+  };
+
+  const handleMicPointerDown = async (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (isConversationBusy || micHoldingRef.current || isRecordingVoice) return;
+
+    micHoldingRef.current = true;
+
+    const finishMicHold = () => {
+      if (!micHoldingRef.current) return;
+      micHoldingRef.current = false;
+      clearMicReleaseListeners();
+      void onStopVoiceRecording();
+    };
+
+    const onRelease = () => finishMicHold();
+    window.addEventListener('pointerup', onRelease);
+    window.addEventListener('mouseup', onRelease);
+    window.addEventListener('blur', onRelease);
+    micReleaseCleanupRef.current = () => {
+      window.removeEventListener('pointerup', onRelease);
+      window.removeEventListener('mouseup', onRelease);
+      window.removeEventListener('blur', onRelease);
+    };
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // pointer capture may fail on some platforms
+    }
+
+    try {
+      await onStartVoiceRecording();
+    } catch (err) {
+      console.error('Mic hold start failed:', err);
+      micHoldingRef.current = false;
+      clearMicReleaseListeners();
+    }
+  };
+
+  useEffect(() => () => clearMicReleaseListeners(), []);
 
   useEffect(() => {
     setHintStep(0);
@@ -675,7 +722,7 @@ export default function ChatPanel({
             <span className="waveform-bar bar4"></span>
             <span className="waveform-bar bar5"></span>
           </div>
-          <span className="voice-recording-text">Recording... Release key/button to send</span>
+          <span className="voice-recording-text">Listening… release Ctrl+Shift+E or the mic button to send</span>
         </div>
       ) : (
         !showMemory && !showSponsors && (
@@ -683,10 +730,8 @@ export default function ChatPanel({
             <button
               type="button"
               className="mic-btn no-drag"
-              onMouseDown={onStartVoiceRecording}
-              onMouseUp={onStopVoiceRecording}
-              onTouchStart={onStartVoiceRecording}
-              onTouchEnd={onStopVoiceRecording}
+              onPointerDown={handleMicPointerDown}
+              disabled={isLoading || isConversationBusy}
               title="Hold to speak"
             >
               🎤

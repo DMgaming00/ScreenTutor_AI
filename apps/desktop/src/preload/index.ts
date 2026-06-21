@@ -16,6 +16,16 @@ const electronAPI = {
   onHotkeyTriggered: (callback: () => void) => {
     ipcRenderer.on('onHotkeyTriggered', () => callback());
   },
+  onHoldDictationStart: (callback: () => void) => {
+    ipcRenderer.on('onHoldDictationStart', () => callback());
+  },
+  onHoldDictationEnd: (callback: () => void) => {
+    ipcRenderer.on('onHoldDictationEnd', () => callback());
+  },
+  onDictationGlow: (callback: (data: { active: boolean }) => void) => {
+    ipcRenderer.on('onDictationGlow', (_event, data) => callback(data));
+  },
+  setDictationGlow: (active: boolean) => ipcRenderer.send('set-dictation-glow', active),
   onOverlayDrawings: (callback: (drawings: any[]) => void) => {
     ipcRenderer.on('onOverlayDrawings', (_event, drawings) => callback(drawings));
   },

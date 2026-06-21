@@ -13,6 +13,7 @@
     "@screentutor/shared": "workspace:*",
     "@sentry/node": "^10.58.0",
     "@sentry/react": "^10.58.0",
+    "koffi": "^3.0.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

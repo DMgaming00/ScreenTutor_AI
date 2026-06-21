@@ -46,6 +46,13 @@ export default function App() {
   const isRecordingRef = useRef(isRecordingVoice);
   const isPanelExpandedRef = useRef(isPanelExpanded);
   const wasSpeakingRef = useRef(false);
+  const holdDictationRef = useRef(false);
+  const voiceSessionRef = useRef<'idle' | 'starting' | 'active'>('idle');
+  const pendingStopRef = useRef(false);
+  const startVoiceRecordingRef = useRef<(options?: { showGlow?: boolean; fromHoldHotkey?: boolean }) => Promise<void>>(
+    async () => {}
+  );
+  const stopVoiceRecordingRef = useRef<() => Promise<void>>(async () => {});
   const activeTurnIdRef = useRef(activeTurnId);
   const visibleExplanationTurnIdRef = useRef<string | null>(null);
   const chatRevealTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -97,7 +104,11 @@ export default function App() {
   const collapsePanel = () => {
     if (isRecordingRef.current) {
       transcriptionProvider.stopSession().catch(console.error);
+      voiceSessionRef.current = 'idle';
+      pendingStopRef.current = false;
       setIsRecordingVoice(false);
+      holdDictationRef.current = false;
+      window.electronAPI.setDictationGlow(false);
     }
     setIsPanelExpanded(false);
     window.electronAPI.setMainSize(COLLAPSED_SIZE, COLLAPSED_SIZE);
@@ -111,11 +122,20 @@ export default function App() {
     }
   };
 
-  const startVoiceRecording = async () => {
+  const startVoiceRecording = async (options?: { showGlow?: boolean; fromHoldHotkey?: boolean }) => {
+    if (voiceSessionRef.current !== 'idle') return;
+
     const isPrivacy = await window.electronAPI.getPrivacyMode();
     if (isPrivacy) {
       setBuddyState('privacy');
       return;
+    }
+
+    voiceSessionRef.current = 'starting';
+    pendingStopRef.current = false;
+
+    if (options?.fromHoldHotkey) {
+      holdDictationRef.current = true;
     }
 
     ttsProvider.stop();
@@ -123,24 +143,49 @@ export default function App() {
     setBuddyState('listening');
     setIsRecordingVoice(true);
 
+    if (options?.showGlow !== false) {
+      window.electronAPI.setDictationGlow(true);
+    }
+
     try {
       await transcriptionProvider.startSession();
+      voiceSessionRef.current = 'active';
+      if (pendingStopRef.current) {
+        pendingStopRef.current = false;
+        await stopVoiceRecordingAndSubmit();
+      }
     } catch (err) {
       console.error('Failed to start microphone recording:', err);
+      voiceSessionRef.current = 'idle';
       setIsRecordingVoice(false);
+      holdDictationRef.current = false;
+      window.electronAPI.setDictationGlow(false);
       setBuddyState('error');
     }
   };
 
   const stopVoiceRecordingAndSubmit = async () => {
+    if (voiceSessionRef.current === 'starting') {
+      pendingStopRef.current = true;
+      return;
+    }
+    if (voiceSessionRef.current === 'idle') return;
+
+    const wasHoldDictation = holdDictationRef.current;
+    holdDictationRef.current = false;
+    voiceSessionRef.current = 'idle';
+    pendingStopRef.current = false;
     setIsRecordingVoice(false);
+    window.electronAPI.setDictationGlow(false);
     setBuddyState('thinking');
 
     try {
       await transcriptionProvider.stopSession();
       const transcript = await transcriptionProvider.getFinalTranscript(activeLessonIdRef.current);
       if (transcript && transcript.trim()) {
-        if (!isPanelExpandedRef.current) expandPanel();
+        if (!wasHoldDictation && !isPanelExpandedRef.current) {
+          expandPanel();
+        }
         startTurn(transcript.trim(), modeRef.current);
         setIsScanning(true);
         let capBase64 = screenshotRef.current?.base64;
@@ -162,7 +207,7 @@ export default function App() {
         const res = await askQuestion(transcript, modeRef.current, capBase64, capMeta, activeLessonIdRef.current, devOverride);
         setBuddyState(res ? 'responding' : 'error');
       } else {
-        setBuddyState('listening');
+        setBuddyState('idle');
       }
     } catch (err) {
       console.error('Failed to stop/transcribe recording:', err);
@@ -171,15 +216,15 @@ export default function App() {
     }
   };
 
+  startVoiceRecordingRef.current = startVoiceRecording;
+  stopVoiceRecordingRef.current = stopVoiceRecordingAndSubmit;
+
   useEffect(() => {
     window.electronAPI.setIgnoreMouseEvents(false);
     window.electronAPI.setMainSize(COLLAPSED_SIZE, COLLAPSED_SIZE);
 
-    window.electronAPI.onHotkeyTriggered(async () => {
-      window.electronAPI.setIgnoreMouseEvents(false);
-      if (!isPanelExpandedRef.current) {
-        expandPanel();
-      }
+    window.electronAPI.onHoldDictationStart(async () => {
+      if (voiceSessionRef.current !== 'idle') return;
 
       performanceTracker.startSpan('total_interaction_latency');
       performanceTracker.startSpan('hotkey_to_listening');
@@ -191,9 +236,16 @@ export default function App() {
         return;
       }
 
-      setBuddyState('listening');
+      setIsScanning(true);
       await captureScreen();
+      setIsScanning(false);
       performanceTracker.endSpan('hotkey_to_listening');
+
+      await startVoiceRecordingRef.current({ showGlow: false, fromHoldHotkey: true });
+    });
+
+    window.electronAPI.onHoldDictationEnd(async () => {
+      await stopVoiceRecordingRef.current();
     });
   }, []);
 

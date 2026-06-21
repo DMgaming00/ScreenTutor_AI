@@ -13,6 +13,10 @@ declare global {
     getPrivacyMode: () => Promise<boolean>;
     onScreenCaptured: (callback: (data: any) => void) => void;
     onHotkeyTriggered: (callback: () => void) => void;
+    onHoldDictationStart: (callback: () => void) => void;
+    onHoldDictationEnd: (callback: () => void) => void;
+    onDictationGlow: (callback: (data: { active: boolean }) => void) => void;
+    setDictationGlow: (active: boolean) => void;
     onOverlayDrawings: (callback: (drawings: any[]) => void) => void;
     onOverlayPoint: (callback: (data: { pointTarget: any; text: string }) => void) => void;
     onOverlayClear: (callback: () => void) => void;

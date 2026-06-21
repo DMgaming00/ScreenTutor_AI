@@ -17,6 +17,9 @@ export const config = {
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   MEMORY_ENABLED: process.env.MEMORY_ENABLED !== 'false',
   RECENT_TURNS_CONTEXT_LIMIT: parseInt(process.env.RECENT_TURNS_CONTEXT_LIMIT || '5', 10),
+  SEMANTIC_CACHE_ENABLED: process.env.SEMANTIC_CACHE_ENABLED !== 'false',
+  TUTOR_CACHE_TTL_SECONDS: parseInt(process.env.TUTOR_CACHE_TTL_SECONDS || '1800', 10),
+  RESEARCH_CACHE_TTL_SECONDS: parseInt(process.env.RESEARCH_CACHE_TTL_SECONDS || '3600', 10),
 
   BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY || '',
   BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID || '',

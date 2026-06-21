@@ -25,7 +25,7 @@ export default function FloatingLauncher({
       case 'responding': return 'Speaking response...';
       case 'error': return 'An error occurred';
       case 'privacy': return 'Privacy mode active';
-      default: return 'Open ScreenTutor (Ctrl+Shift+E)';
+      default: return 'Hold Ctrl+Shift+E to speak · Click for sidebar';
     }
   };
 
