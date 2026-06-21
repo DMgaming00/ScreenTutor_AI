@@ -442,7 +442,12 @@ export default function AnnotationOverlay() {
       lastPointNormRef.current = null;
       firedEventCountRef.current = 0;
       shapesRef.current = [];
-      pointerPosRef.current = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+      if (data.pointTarget.x !== null && data.pointTarget.y !== null) {
+        pointerPosRef.current = { x: data.pointTarget.x, y: data.pointTarget.y };
+      } else {
+        pointerPosRef.current = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+      }
       pointerLabelRef.current = '';
 
       setPoint({ pointTarget: data.pointTarget, text: data.text || '' });

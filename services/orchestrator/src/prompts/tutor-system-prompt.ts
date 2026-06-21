@@ -1,3 +1,5 @@
+import { buildCoordinateGuide, type ScreenMetadata } from '@screentutor/shared';
+
 /** Category-specific additions appended after the base system prompt. */
 export type TutorAgentName =
   | 'MathTutorAgent'
@@ -22,8 +24,10 @@ Teach ONE diagram element per sentence. The pointer moves when that sentence app
 6. Add [DRAW:label:x,y:equation] for substituted equations on the diagram
 
 ### Coordinate rules
-- x,y are normalized 0–1 on the FULL screenshot (0=left/top, 1=right/bottom)
-- Aim the pointer at the CENTER of the label or angle mark you name
+- x,y are normalized 0.0–1.0 fractions on the attached screenshot image (NOT pixel values)
+- x=0 is the LEFT edge of the image, x=1 is the RIGHT edge; y=0 is TOP, y=1 is BOTTOM
+- Visually locate each element's CENTER in the image, then estimate its fraction
+- Aim [POINT] at the CENTER of the label, vertex, side, or angle you name
 - Prefer [DRAW:circle] r=0.03–0.04 at the [POINT] location
 - Use [DRAW:highlight] to shade the triangle or region being discussed
 - NEVER place a shape far from the [POINT] in the same step
@@ -127,12 +131,15 @@ export function buildUserPrompt(input: {
   question: string;
   mode: string;
   learnerMemory?: unknown;
-  screenMetadata?: unknown;
+  screenMetadata?: ScreenMetadata | unknown;
   appMetadata?: unknown;
   accessibilityTree?: unknown;
   researchContext?: unknown;
 }): string {
+  const meta = input.screenMetadata as ScreenMetadata | undefined;
   const parts: string[] = [
+    buildCoordinateGuide(meta),
+    '',
     `Question: "${input.question}"`,
     `Mode: ${input.mode}`,
     '',

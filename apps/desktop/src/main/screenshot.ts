@@ -6,6 +6,21 @@ import { CapturedDisplay } from '@screentutor/shared';
 
 export let capturedDisplays: CapturedDisplay[] = [];
 
+export interface CaptureResult {
+  base64: string;
+  /** Image pixel width sent to the model */
+  width: number;
+  /** Image pixel height sent to the model */
+  height: number;
+  screenNumber: number;
+  displayId: string;
+  displayWidth: number;
+  displayHeight: number;
+  displayFrameX: number;
+  displayFrameY: number;
+  scaleFactor: number;
+}
+
 export function updateCapturedDisplays() {
   try {
     const displays = screen.getAllDisplays();
@@ -31,37 +46,70 @@ export function updateCapturedDisplays() {
   }
 }
 
-export async function captureScreen(): Promise<{ base64: string; width: number; height: number } | null> {
+export function getCursorDisplayMeta(): CapturedDisplay | null {
+  if (capturedDisplays.length === 0) {
+    updateCapturedDisplays();
+  }
+  return capturedDisplays.find((d) => d.isCursorDisplay) ?? capturedDisplays[0] ?? null;
+}
+
+export async function captureScreen(): Promise<CaptureResult | null> {
   try {
     updateCapturedDisplays();
 
+    const cursorPoint = screen.getCursorScreenPoint();
+    const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint);
+    const targetMeta = getCursorDisplayMeta();
+    if (!targetMeta) {
+      Sentry.captureMessage('No display metadata available for capture.');
+      return null;
+    }
+
+    const thumbW = targetMeta.imageWidthPixels;
+    const thumbH = targetMeta.imageHeightPixels;
+
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 }
+      thumbnailSize: { width: thumbW, height: thumbH },
     });
 
-    const primaryScreen = sources[0]; // simplistic for MVP
-    if (!primaryScreen) {
-      Sentry.captureMessage('No primary screen source captured.');
+    let matchedSource = sources.find((s) => s.display_id === String(cursorDisplay.id));
+    if (!matchedSource) {
+      const displayIndex = screen.getAllDisplays().findIndex((d) => d.id === cursorDisplay.id);
+      matchedSource = displayIndex >= 0 ? sources[displayIndex] : sources[0];
+    }
+
+    if (!matchedSource) {
+      Sentry.captureMessage('No screen source captured for cursor display.');
       return null;
     }
 
-    // Basic privacy check on primary screen name
-    if (isWindowDenied(primaryScreen.name)) {
-      console.warn(`Privacy warning: Refusing to capture screen containing denied app: ${primaryScreen.name}`);
+    if (isWindowDenied(matchedSource.name)) {
+      console.warn(`Privacy warning: Refusing to capture screen containing denied app: ${matchedSource.name}`);
       return null;
     }
 
-    const image = primaryScreen.thumbnail;
+    const image = matchedSource.thumbnail;
+    const size = image.getSize();
     const base64 = image.toDataURL();
 
-    // Log metadata only — never log image content or raw base64
-    logScreenshotMetadata(base64, image.getSize().width, image.getSize().height);
+    logScreenshotMetadata(base64, size.width, size.height);
+
+    console.log(
+      `[Screenshot] display=${targetMeta.screenNumber} image=${size.width}x${size.height} dip=${targetMeta.displayWidth}x${targetMeta.displayHeight} scale=${targetMeta.displayScaleFactor}`
+    );
 
     return {
       base64,
-      width: image.getSize().width,
-      height: image.getSize().height
+      width: size.width,
+      height: size.height,
+      screenNumber: targetMeta.screenNumber,
+      displayId: String(cursorDisplay.id),
+      displayWidth: targetMeta.displayWidth,
+      displayHeight: targetMeta.displayHeight,
+      displayFrameX: targetMeta.displayFrameX,
+      displayFrameY: targetMeta.displayFrameY,
+      scaleFactor: targetMeta.displayScaleFactor,
     };
   } catch (err) {
     Sentry.captureException(err);
@@ -70,18 +118,13 @@ export async function captureScreen(): Promise<{ base64: string; width: number; 
   }
 }
 
-/**
- * Logs screenshot metadata (hash + size in KB) without exposing any image content.
- * SCREENSHOT_STORAGE=none by default — raw images are never written to disk.
- */
 export function logScreenshotMetadata(base64: string, width: number, height: number): void {
   try {
-    // Strip the data URI prefix before hashing
     const raw = base64.replace(/^data:[^;]+;base64,/, '');
     const sizeKb = Math.round(Buffer.byteLength(raw, 'base64') / 1024);
     const hash = createHash('md5').update(raw).digest('hex').slice(0, 8);
     console.log(`[Screenshot] size=${sizeKb}KB hash=${hash} dimensions=${width}x${height}`);
   } catch {
-    // Silently ignore — logging failure must never break capture
+    // Silently ignore
   }
 }

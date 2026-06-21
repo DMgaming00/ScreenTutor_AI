@@ -1,10 +1,16 @@
-import { patchConsole, mapCoordinatesToGlobal } from '@screentutor/shared';
+import { patchConsole, mapNormalizedToDisplayLocal } from '@screentutor/shared';
 patchConsole();
 
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
-import { captureScreen, updateCapturedDisplays, capturedDisplays } from './screenshot.js';
+import {
+  captureScreen,
+  updateCapturedDisplays,
+  capturedDisplays,
+  getCursorDisplayMeta,
+  type CaptureResult,
+} from './screenshot.js';
 import { isWindowDenied, togglePrivacyMode, getPrivacyMode, getActiveWindowTitle } from './privacy.js';
 import { registerShortcuts, unregisterShortcuts } from './shortcuts.js';
 import * as Sentry from '@sentry/node';
@@ -52,9 +58,24 @@ function raiseMainWindow(focus = false) {
   }
 }
 
-function raiseOverlayWindow() {
+function positionOverlayOnDisplay(display: {
+  displayFrameX: number;
+  displayFrameY: number;
+  displayWidth: number;
+  displayHeight: number;
+}) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  overlayWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+  overlayWindow.setBounds({
+    x: display.displayFrameX,
+    y: display.displayFrameY,
+    width: display.displayWidth,
+    height: display.displayHeight,
+  });
+  raiseOverlayWindow();
+}
+
+function syncOverlayToCapture(capture: CaptureResult) {
+  positionOverlayOnDisplay(capture);
 }
 
 function createWindow() {
@@ -101,16 +122,28 @@ function createWindow() {
   }
 }
 
+function raiseOverlayWindow() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  overlayWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+}
+
 function createOverlay() {
   try {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { x, y, width, height } = primaryDisplay.bounds;
+    const cursorMeta = getCursorDisplayMeta();
+    const bounds = cursorMeta
+      ? {
+          x: cursorMeta.displayFrameX,
+          y: cursorMeta.displayFrameY,
+          width: cursorMeta.displayWidth,
+          height: cursorMeta.displayHeight,
+        }
+      : screen.getPrimaryDisplay().bounds;
 
     overlayWindow = new BrowserWindow({
-      x,
-      y,
-      width,
-      height,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
       transparent: true,
       frame: false,
       hasShadow: false,
@@ -187,7 +220,11 @@ app.on('will-quit', () => {
 
 // IPC Handlers
 ipcMain.handle('capture-screen', async () => {
-  return await captureScreen();
+  const result = await captureScreen();
+  if (result) {
+    syncOverlayToCapture(result);
+  }
+  return result;
 });
 
 ipcMain.on('send-drawings', (event, drawings) => {
@@ -284,42 +321,34 @@ ipcMain.on('finish-overlay-narration', () => {
 
 ipcMain.on('fly-to-point', (event, x, y, screenNumber, text) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    // Ensure display cache has been populated
     if (capturedDisplays.length === 0) {
       updateCapturedDisplays();
     }
 
-    const mapped = mapCoordinatesToGlobal({
-      x,
-      y,
-      screenNumber,
-      displays: capturedDisplays
-    });
-
-    if (!mapped) {
+    const local = mapNormalizedToDisplayLocal(x, y, capturedDisplays, screenNumber);
+    if (!local) {
       console.warn('fly-to-point: No target display identified.');
       return;
     }
 
-    const { globalX, globalY, targetDisplay } = mapped;
+    positionOverlayOnDisplay(local.targetDisplay);
 
-    // DEBUG_COORDINATES logging
     const debugCoordinates = process.env.DEBUG_COORDINATES === 'true';
     if (debugCoordinates) {
-      console.log(`[DEBUG_COORDINATES] fly-to-point triggered: x=${x}, y=${y}, screenNumber=${screenNumber}`);
-      console.log(`[DEBUG_COORDINATES] Target display selected: screenNumber=${targetDisplay.screenNumber}, isCursor=${targetDisplay.isCursorDisplay}`);
-      console.log(`[DEBUG_COORDINATES] Display geometry: width=${targetDisplay.displayWidth}, height=${targetDisplay.displayHeight}, scaleFactor=${targetDisplay.displayScaleFactor}`);
-      console.log(`[DEBUG_COORDINATES] Global screen coordinates: x=${globalX}, y=${globalY}`);
+      console.log(`[DEBUG_COORDINATES] fly-to-point norm=(${x}, ${y}) screen=${screenNumber}`);
+      console.log(`[DEBUG_COORDINATES] overlay-local=(${local.localX}, ${local.localY}) display=${local.targetDisplay.screenNumber}`);
     }
 
-    const primaryBounds = screen.getPrimaryDisplay().bounds;
-    const relX = globalX - primaryBounds.x;
-    const relY = globalY - primaryBounds.y;
-
-    // mainWindow.webContents.send('onFlyToPoint', { x: relX, y: relY });
-    
     if (overlayWindow && !overlayWindow.isDestroyed() && text !== undefined) {
-      overlayWindow.webContents.send('onOverlayPoint', { pointTarget: { x: relX, y: relY }, text });
+      raiseOverlayWindow();
+      overlayWindow.webContents.send('onOverlayPoint', {
+        pointTarget: {
+          x: local.localX,
+          y: local.localY,
+          screenNumber: local.targetDisplay.screenNumber,
+        },
+        text,
+      });
     }
   }
 });

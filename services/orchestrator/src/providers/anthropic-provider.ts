@@ -2,7 +2,8 @@ import { AIProvider } from './ai-provider.js';
 import { TutorInput, TutorResponse, prepareOverlayText, stripForTts } from '@screentutor/shared';
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
-import { TUTOR_SYSTEM_PROMPT, buildUserPrompt } from '../prompts/tutor-system-prompt.js';
+import { buildUserPrompt, TUTOR_SYSTEM_PROMPT } from '../prompts/tutor-system-prompt.js';
+import { buildCoordinateGuide } from '@screentutor/shared';
 
 export class ClaudeProvider implements AIProvider {
   readonly name = 'claude';
@@ -167,6 +168,9 @@ export class ClaudeProvider implements AIProvider {
       parsed.spokenText = stripForTts(rawSpoken);
       parsed.spokenExplanation = parsed.spokenText;
       parsed.pointTarget = prepared.pointTarget;
+      if (input.screenMetadata?.screenNumber != null && parsed.pointTarget) {
+        parsed.pointTarget.screenNumber = input.screenMetadata.screenNumber;
+      }
       parsed.drawings = [];
 
       if (!/\[DRAW:/i.test(prepared.overlayText)) {

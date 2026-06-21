@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import ChatPanel from './components/ChatPanel';
 import FloatingLauncher from './components/FloatingLauncher';
-import { useScreenCapture } from './hooks/useScreenCapture';
+import { useScreenCapture, getScreenMetadata } from './hooks/useScreenCapture';
 import { useTutor } from './hooks/useTutor';
 import { useChatHistory } from './hooks/useChatHistory';
 import { TutorMode, buildNarrationSteps, estimateSpeechDurationMs } from '@screentutor/shared';
@@ -144,6 +144,7 @@ export default function App() {
         startTurn(transcript.trim(), modeRef.current);
         setIsScanning(true);
         let capBase64 = screenshotRef.current?.base64;
+        let capMeta = getScreenMetadata(screenshotRef.current);
         if (!activeLessonIdRef.current) {
           const capData = await captureScreen();
           setIsScanning(false);
@@ -152,12 +153,13 @@ export default function App() {
             return;
           }
           capBase64 = capData.base64;
+          capMeta = getScreenMetadata(capData);
         } else {
           setIsScanning(false);
         }
 
         const devOverride = localStorage.getItem('screentutor_dev_override_redaction') === 'true';
-        const res = await askQuestion(transcript, modeRef.current, capBase64, undefined, activeLessonIdRef.current, devOverride);
+        const res = await askQuestion(transcript, modeRef.current, capBase64, capMeta, activeLessonIdRef.current, devOverride);
         setBuddyState(res ? 'responding' : 'error');
       } else {
         setBuddyState('listening');
@@ -358,6 +360,7 @@ export default function App() {
     try {
       setIsScanning(true);
       let capBase64 = screenshot?.base64;
+      let capMeta = getScreenMetadata(screenshot);
       if (!activeLessonId) {
         performanceTracker.startSpan('listening_to_screenshot');
         const capData = await captureScreen();
@@ -370,12 +373,13 @@ export default function App() {
           return;
         }
         capBase64 = capData.base64;
+        capMeta = getScreenMetadata(capData);
       } else {
         setIsScanning(false);
       }
 
       const devOverride = localStorage.getItem('screentutor_dev_override_redaction') === 'true';
-      const res = await askQuestion(questionText, mode, capBase64, undefined, activeLessonId, devOverride);
+      const res = await askQuestion(questionText, mode, capBase64, capMeta, activeLessonId, devOverride);
       setBuddyState(res ? 'responding' : 'error');
       performanceTracker.endSpan('total_interaction_latency');
     } catch {

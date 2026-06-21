@@ -4,6 +4,7 @@ import MemoryPanel from './MemoryPanel';
 import SponsorStatusPanel from './SponsorStatusPanel';
 import DemoLessonsPanel from './DemoLessonsPanel';
 import { TutorMode, parsePointTag, DEMO_LESSONS, type DemoLesson, RedactionService } from '@screentutor/shared';
+import { getScreenMetadata } from '../hooks/useScreenCapture';
 import * as Sentry from '@sentry/react';
 import { getSimplerExplanation, generatePracticeProblem } from '../api/client';
 import type { ChatTurn } from '../hooks/useChatHistory';
@@ -218,7 +219,7 @@ export default function ChatPanel({
       return;
     }
     const devOverride = localStorage.getItem('screentutor_dev_override_redaction') === 'true';
-    await askQuestion(trimmed, mode, screenshot?.base64, undefined, activeLessonId, devOverride);
+    await askQuestion(trimmed, mode, screenshot?.base64, getScreenMetadata(screenshot), activeLessonId, devOverride);
   };
 
   const handleToggleMemory = () => {
@@ -640,7 +641,7 @@ export default function ChatPanel({
                             className="retry-btn no-drag"
                             onClick={() => {
                               const devOverride = localStorage.getItem('screentutor_dev_override_redaction') === 'true';
-                              askQuestion(turn.userText, turn.mode, screenshot?.base64, undefined, activeLessonId, devOverride);
+                              askQuestion(turn.userText, turn.mode, screenshot?.base64, getScreenMetadata(screenshot), activeLessonId, devOverride);
                             }}
                           >
                             🔄 Retry

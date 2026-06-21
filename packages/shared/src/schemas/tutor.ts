@@ -15,9 +15,17 @@ export type TutorMode = z.infer<typeof TutorMode>;
 
 export const ScreenMetadata = z.object({
   displayId: z.string().optional(),
+  /** Captured image width in pixels (what the model sees) */
+  imageWidth: z.number().optional(),
+  /** Captured image height in pixels (what the model sees) */
+  imageHeight: z.number().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
+  displayWidth: z.number().optional(),
+  displayHeight: z.number().optional(),
+  screenNumber: z.number().optional(),
   scaleFactor: z.number().optional(),
+  coordinateSpace: z.enum(['normalized_image']).optional(),
 });
 export type ScreenMetadata = z.infer<typeof ScreenMetadata>;
 
