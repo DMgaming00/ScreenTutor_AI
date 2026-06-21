@@ -90,9 +90,6 @@ export class TutorOrchestrator {
           weakConcepts: profile.weakConcepts || [],
           strongConcepts: profile.strongConcepts || []
         };
-        this.observability.recordEvent(traceId, 'MemoryFetched', {
-          weakConceptsCount: profile.weakConcepts?.length || 0
-        });
 
         // Personalization: Merge preferred explanation style if available
         if (profile.preferredExplanationStyle) {
@@ -101,6 +98,25 @@ export class TutorOrchestrator {
           }
           input.learnerPreferences.explanationStyle = profile.preferredExplanationStyle;
         }
+
+        // Session history: feed prior turns into the model for conversational continuity
+        if (config.MEMORY_ENABLED && profile.memoryEnabled !== false) {
+          const recentTurns = await this.memory.getRecentTurns(
+            input.sessionId,
+            config.RECENT_TURNS_CONTEXT_LIMIT
+          );
+          if (recentTurns.length > 0) {
+            input.recentTurns = recentTurns;
+          }
+          this.observability.recordEvent(traceId, 'SessionHistoryFetched', {
+            recentTurnsCount: recentTurns.length
+          });
+        }
+
+        this.observability.recordEvent(traceId, 'MemoryFetched', {
+          weakConceptsCount: profile.weakConcepts?.length || 0,
+          recentTurnsCount: input.recentTurns?.length || 0
+        });
 
         // 4. AgentRouting
         this.observability.addSpan(traceId, 'AgentRouting');

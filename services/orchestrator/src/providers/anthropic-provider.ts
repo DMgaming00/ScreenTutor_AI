@@ -26,6 +26,7 @@ export class ClaudeProvider implements AIProvider {
       question: input.question,
       mode: input.mode,
       learnerMemory: input.learnerMemory,
+      recentTurns: input.recentTurns,
       screenMetadata: input.screenMetadata,
       appMetadata: input.appMetadata,
       accessibilityTree: input.accessibilityTree,

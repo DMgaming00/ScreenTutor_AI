@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DrawingCommand } from './drawing.js';
 import { ProposedAction } from './action.js';
+import { SessionTurn } from './memory.js';
 
 // ---------------------------------------------------------------------------
 // Tutor Modes
@@ -60,6 +61,8 @@ export const TutorInput = z.object({
   appMetadata: AppMetadata.optional(),
   learnerPreferences: LearnerPreferences.optional(),
   learnerMemory: z.any().optional(),
+  /** Populated by orchestrator from Redis session history before the model call */
+  recentTurns: z.array(SessionTurn).optional(),
   accessibilityTree: z.any().optional(),
   researchContext: z.any().optional(),
   privacyMode: z.boolean().optional(),

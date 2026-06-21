@@ -1,4 +1,4 @@
-import { buildCoordinateGuide, type ScreenMetadata } from '@screentutor/shared';
+import { buildCoordinateGuide, type ScreenMetadata, type SessionTurn } from '@screentutor/shared';
 
 /** Category-specific additions appended after the base system prompt. */
 export type TutorAgentName =
@@ -127,10 +127,22 @@ MANDATORY drawing rules:
 - Do not duplicate words via tag labels
 - Tags are invisible to the user`;
 
+export function formatSessionHistoryForPrompt(turns: SessionTurn[]): string {
+  return turns
+    .map((turn, index) => {
+      const parts = [`${index + 1}. [${turn.mode}]`, `Question: "${turn.question}"`];
+      if (turn.concept) parts.push(`Concept: ${turn.concept}`);
+      if (turn.responseSummary) parts.push(`Tutor summary: ${turn.responseSummary}`);
+      return parts.join(' | ');
+    })
+    .join('\n');
+}
+
 export function buildUserPrompt(input: {
   question: string;
   mode: string;
   learnerMemory?: unknown;
+  recentTurns?: SessionTurn[];
   screenMetadata?: ScreenMetadata | unknown;
   appMetadata?: unknown;
   accessibilityTree?: unknown;
@@ -156,8 +168,14 @@ export function buildUserPrompt(input: {
   if (input.learnerMemory) {
     parts.push('', 'Learner memory:', JSON.stringify(input.learnerMemory, null, 2));
   }
-  if (input.screenMetadata) {
-    parts.push('', 'Screen metadata:', JSON.stringify(input.screenMetadata, null, 2));
+  if (input.recentTurns && input.recentTurns.length > 0) {
+    parts.push(
+      '',
+      'Recent conversation in this session (oldest first):',
+      formatSessionHistoryForPrompt(input.recentTurns),
+      '',
+      'Continue naturally from this context. Reference earlier steps when relevant (e.g. "as we saw before"). Do not repeat full prior explanations unless the user asks.'
+    );
   }
   if (input.appMetadata) {
     parts.push('', 'Active app:', JSON.stringify(input.appMetadata, null, 2));
