@@ -12,3 +12,7 @@ __pycache__/
 *_data.json
 .convex-tmp/
 .bench/
+
+# macOS / packaging
+.DS_Store
+release/

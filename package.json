@@ -11,7 +11,9 @@
     "test": "pnpm --filter @screentutor/orchestrator test",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "pnpm -r typecheck",
-    "format": "prettier --write \"**/*.{ts,tsx,json,md,css,html}\""
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,css,html}\"",
+    "dist:mac": "pnpm --filter @screentutor/shared build && pnpm --filter @screentutor/desktop dist:mac",
+    "dist:win": "pnpm --filter @screentutor/shared build && pnpm --filter @screentutor/desktop dist:win"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

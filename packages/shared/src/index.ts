@@ -28,3 +28,6 @@ export * from './redaction.js';
 export * from './coordinates.js';
 export * from './capture-region.js';
 
+// Key combos (Co-drive input on Windows/macOS)
+export * from './key-combo.js';
+export * from './keymap-darwin.js';

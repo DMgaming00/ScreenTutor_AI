@@ -7,7 +7,7 @@ This script guides you through a compelling 3-minute live demonstration of Scree
 ## Setup & Preparation (30 seconds)
 1. Launch ScreenTutor:
    ```bash
-   powershell -ExecutionPolicy Bypass -Command "pnpm dev"
+   pnpm dev
    ```
 2. Have the desktop application open. Ensure it is in mock mode (default, no API keys required).
 3. Open the developer debug panel in the UI.

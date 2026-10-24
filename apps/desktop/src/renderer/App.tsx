@@ -249,7 +249,7 @@ export default function App() {
       performanceTracker.endSpan('hotkey_to_listening');
 
       // Screen capture runs on release (stopVoiceRecordingAndSubmit), not on hotkey press —
-      // avoids triggering Windows' screen-capture / recording UI while holding the key.
+      // avoids triggering the OS screen-capture / recording UI (Windows, macOS) while holding the key.
       await startVoiceRecordingRef.current({ showGlow: false, fromHoldHotkey: true });
     });
 

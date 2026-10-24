@@ -1,5 +1,6 @@
 import { globalShortcut } from 'electron';
 import * as Sentry from '@sentry/node';
+import { HOLD_HOTKEY_ACCELERATOR, HOLD_HOTKEY_LABEL, isMac, isWindows } from './platform.js';
 
 export interface HoldDictationCallbacks {
   onStart: () => void;
@@ -16,18 +17,27 @@ const POLL_MS = 40;
 /** Ignore brief accidental taps; require a deliberate hold before starting dictation. */
 const MIN_HOLD_MS = 150;
 
-async function loadWin32Poll() {
-  if (process.platform !== 'win32') return null;
+interface HoldKeyPoller {
+  isHoldComboPressed(): boolean;
+}
+
+/**
+ * Loads the OS-specific "is the hold combo down?" poller. Set SCREENTUTOR_HOTKEY_MODE=toggle
+ * to skip polling and use a press-to-start / press-to-stop global shortcut instead.
+ */
+async function loadHoldKeyPoller(): Promise<HoldKeyPoller | null> {
+  if (process.env.SCREENTUTOR_HOTKEY_MODE === 'toggle') return null;
   try {
-    return await import('./hold-key-poll.win32.js');
+    if (isWindows) return await import('./hold-key-poll.win32.js');
+    if (isMac) return await import('./hold-key-poll.darwin.js');
   } catch (err) {
-    console.warn('Win32 key poll unavailable:', err);
-    return null;
+    console.warn('Hold-key poll unavailable, using toggle shortcut:', err);
   }
+  return null;
 }
 
 function registerTapToggleFallback(onStart: () => void, onEnd: () => void) {
-  const registered = globalShortcut.register('CommandOrControl+Shift+E', () => {
+  const registered = globalShortcut.register(HOLD_HOTKEY_ACCELERATOR, () => {
     if (!tapToggleActive) {
       tapToggleActive = true;
       holdActive = true;
@@ -40,29 +50,29 @@ function registerTapToggleFallback(onStart: () => void, onEnd: () => void) {
   });
 
   if (!registered) {
-    console.warn('CommandOrControl+Shift+E registration failed.');
-    Sentry.captureMessage('Global hotkey CommandOrControl+Shift+E registration failed.');
+    console.warn(`${HOLD_HOTKEY_ACCELERATOR} registration failed.`);
+    Sentry.captureMessage(`Global hotkey ${HOLD_HOTKEY_ACCELERATOR} registration failed.`);
   } else {
-    console.log('Hold-to-dictate fallback: Ctrl+Shift+E toggles listening');
+    console.log(`Hold-to-dictate fallback: ${HOLD_HOTKEY_LABEL} toggles listening`);
   }
 }
 
-/** Register Ctrl+Shift+E hold-to-dictate (start on press, end on release). */
+/** Register the hold-to-dictate hotkey (Ctrl+Shift+E / Cmd+Shift+E): start on press, end on release. */
 export async function registerHoldDictationShortcuts(onStart: () => void, onEnd: () => void) {
   callbacks = { onStart, onEnd };
   holdActive = false;
   comboPressedAt = null;
   tapToggleActive = false;
 
-  const win32 = await loadWin32Poll();
+  const poller = await loadHoldKeyPoller();
 
-  if (win32) {
+  if (poller) {
     pollTimer = setInterval(() => {
       if (!callbacks) return;
 
       let comboDown = false;
       try {
-        comboDown = win32.isHoldComboPressed();
+        comboDown = poller.isHoldComboPressed();
       } catch (err) {
         console.warn('Key poll error:', err);
         return;
@@ -87,7 +97,7 @@ export async function registerHoldDictationShortcuts(onStart: () => void, onEnd:
       }
     }, POLL_MS);
 
-    console.log('Hold-to-dictate registered: Ctrl+Shift+E (Win32 poll)');
+    console.log(`Hold-to-dictate registered: ${HOLD_HOTKEY_LABEL} (${isMac ? 'CoreGraphics' : 'Win32'} poll)`);
     return;
   }
 
@@ -109,7 +119,7 @@ export function unregisterHoldDictationShortcuts() {
   }
 
   try {
-    globalShortcut.unregister('CommandOrControl+Shift+E');
+    globalShortcut.unregister(HOLD_HOTKEY_ACCELERATOR);
   } catch {
     // ignore
   }

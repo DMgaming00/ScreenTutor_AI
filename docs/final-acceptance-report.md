@@ -95,10 +95,10 @@ To perform the 3-minute client demonstration:
 Ensure your environment is clean:
 ```bash
 # 1. Run production build to verify compilation
-powershell -ExecutionPolicy Bypass -Command "pnpm build"
+pnpm build
 
 # 2. Start the orchestrator backend and desktop app
-powershell -ExecutionPolicy Bypass -Command "pnpm dev"
+pnpm dev
 ```
 
 ### B. Step-by-Step Demo Script

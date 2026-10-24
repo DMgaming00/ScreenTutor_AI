@@ -1,6 +1,7 @@
 import { desktopCapturer, screen, type NativeImage } from 'electron';
 import { createHash } from 'crypto';
 import { isWindowDenied } from './privacy.js';
+import { isScreenCaptureBlocked, openPermissionSettings } from './permissions.js';
 import * as Sentry from '@sentry/node';
 import { CapturedDisplay, normalizeCaptureRegion, type CaptureRegion } from '@screentutor/shared';
 
@@ -73,8 +74,20 @@ export async function captureScreenRegion(regionDip: DipRect): Promise<CaptureRe
   return captureScreenInternal(regionDip);
 }
 
+let screenPermissionHintShown = false;
+
 async function captureScreenInternal(regionDip: DipRect | null): Promise<CaptureResult | null> {
   try {
+    if (isScreenCaptureBlocked()) {
+      // macOS returns blank thumbnails without Screen Recording permission; say so instead.
+      console.warn('[Screenshot] Screen Recording permission is not granted; capture skipped.');
+      if (!screenPermissionHintShown) {
+        screenPermissionHintShown = true;
+        openPermissionSettings('screen');
+      }
+      return null;
+    }
+
     updateCapturedDisplays();
 
     const cursorPoint = screen.getCursorScreenPoint();

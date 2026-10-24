@@ -1,12 +1,10 @@
-declare module '*.png' {
-  const src: string;
-  export default src;
-}
-
 export {};
 
 declare global {
   interface ElectronAPI {
+    platform: string;
+    getPermissionStatus: () => Promise<{ platform: string; screen: string; microphone: string; accessibility: boolean }>;
+    openPermissionSettings: (kind: 'screen' | 'microphone' | 'accessibility') => void;
     captureScreen: () => Promise<any>;
     startRegionSelect: () => Promise<{ ok: boolean; reason?: string }>;
     cancelRegionSelect: () => void;

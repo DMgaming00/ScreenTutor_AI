@@ -1,4 +1,5 @@
 import './FloatingButton.css';
+import { HOLD_HOTKEY_LABEL } from '../platform';
 
 interface Props {
   state: 'idle' | 'listening' | 'thinking' | 'responding' | 'pointing' | 'error' | 'privacy';
@@ -86,7 +87,7 @@ export default function FloatingButton({ state, onClick, isRecordingVoice, isSpe
       case 'privacy': return 'Privacy Mode is Active';
       case 'idle':
       default:
-        return 'ScreenTutor AI (Ctrl+Shift+E)';
+        return `ScreenTutor AI (${HOLD_HOTKEY_LABEL})`;
     }
   };
 

@@ -25,7 +25,7 @@ Every integration sits behind an interface with a local fallback, so the app run
 ## Anthropic — Claude computer use (Co-drive)
 
 - **What happens:** in Co-drive mode the goal and screenshot go to Claude with the computer toolset (drag, mouse-down/up, hold-key, zoom disabled). Up to three `left_click` / `double_click` / `right_click` / `type` / `key` / `scroll` calls become approval cards with normalized coordinates. Planning runs in parallel with the tutor's answer.
-- **Execution:** an approved card is handed to the Electron main process, which re-checks privacy mode and the window denylist, maps the point to the right display, and performs it with Windows input APIs (typing is pasted via the clipboard, then the clipboard is restored).
+- **Execution:** an approved card is handed to the Electron main process, which re-checks privacy mode and the window denylist, maps the point to the right display, and performs it with native input APIs (Win32 on Windows, CoreGraphics on macOS) (typing is pasted via the clipboard, then the clipboard is restored).
 - **Env:** `CODRIVE_ENABLED` (default on), `ENABLE_SAFE_ACTIONS` (default **off** — cards are shown but nothing is performed).
 - **Safety:** every action needs a click to approve; `checkActionSafety` blocks deletes, terminals, sending messages, purchases and credentials; actions are single-use.
 

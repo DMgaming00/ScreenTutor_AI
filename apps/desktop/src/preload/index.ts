@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 const electronAPI = {
+  /** 'darwin' | 'win32' | 'linux' — lets the UI show Cmd vs Ctrl. */
+  platform: process.platform,
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
   startRegionSelect: () => ipcRenderer.invoke('start-region-select'),
   cancelRegionSelect: () => ipcRenderer.send('cancel-region-select'),
@@ -83,7 +85,10 @@ const electronAPI = {
     ipcRenderer.on('trigger-overlay-error', () => callback());
   },
   getActiveWindowTitle: (): Promise<string | null> => ipcRenderer.invoke('get-active-window-title'),
-  /** Perform a Co-drive action the user approved (Windows only for now). */
+  getPermissionStatus: (): Promise<{ platform: string; screen: string; microphone: string; accessibility: boolean }> =>
+    ipcRenderer.invoke('get-permission-status'),
+  openPermissionSettings: (kind: 'screen' | 'microphone' | 'accessibility') => ipcRenderer.send('open-permission-settings', kind),
+  /** Perform a Co-drive action the user approved (Windows and macOS). */
   executeApprovedAction: (action: unknown): Promise<{ success: boolean; message: string }> =>
     ipcRenderer.invoke('execute-approved-action', action),
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('set-ignore-mouse-events', ignore, options),
