@@ -29,6 +29,8 @@ const FADE_IN_MS = 200;
 const MAX_QUEUE_DEPTH = 50;
 const CHAR_STREAM_MS = 30;
 const TRAIL_LENGTH = 6;
+/** Opacity of earlier steps' diagram marks, so the current step stands out */
+const FADED_SHAPE_ALPHA = 0.35;
 interface QueuedPoint {
   px: number;
   py: number;
@@ -39,6 +41,8 @@ interface ActiveShape {
   id: string;
   shape: CanvasDrawShape;
   createdAt: number;
+  /** A mark from an earlier narration step, drawn dimmed */
+  faded?: boolean;
 }
 
 function easeInOut(t: number): number {
@@ -183,7 +187,11 @@ export default function AnnotationOverlay() {
     };
   };
 
-  const applyStreamEvent = (event: StreamEvent) => {
+  /**
+   * `replay` re-applies an earlier narration step: its shapes appear instantly
+   * (working lines at full strength, diagram marks faded) and the pointer stays put.
+   */
+  const applyStreamEvent = (event: StreamEvent, replay = false) => {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const region = captureRegionRef.current;
@@ -192,9 +200,10 @@ export default function AnnotationOverlay() {
       const mapped = mapPointThroughCaptureRegion(event.x, event.y, region);
       lastPointNormRef.current = { x: mapped.x, y: mapped.y };
       lastPointLabelRef.current = event.label;
-      enqueuePoint(mapped.x * W, mapped.y * H, event.label);
+      if (!replay) enqueuePoint(mapped.x * W, mapped.y * H, event.label);
     } else if (event.type === 'clear') {
-      shapesRef.current = [];
+      // Clear only this step's marks: written working and earlier steps' faded marks persist.
+      shapesRef.current = shapesRef.current.filter((s) => s.faded || s.shape.kind === 'work');
       lastPointNormRef.current = null;
       lastPointLabelRef.current = '';
     } else if (event.type === 'draw') {
@@ -204,7 +213,8 @@ export default function AnnotationOverlay() {
       shapesRef.current.push({
         id: `shape-${shapeIdRef.current++}`,
         shape: anchored,
-        createdAt: performance.now(),
+        createdAt: replay ? 0 : performance.now(),
+        faded: replay && anchored.kind !== 'work',
       });
     }
   };
@@ -241,6 +251,13 @@ export default function AnnotationOverlay() {
 
   const applyNarrationStep = (stepIndex: number, steps: NarrationStep[]) => {
     shapesRef.current = [];
+    // Rebuild what earlier steps left on screen so the explanation accumulates.
+    for (let i = 0; i < stepIndex; i++) {
+      lastPointNormRef.current = null;
+      for (const event of steps[i].events) {
+        if (event.type !== 'clear') applyStreamEvent(event, true);
+      }
+    }
     lastPointNormRef.current = null;
     const display = steps
       .slice(0, stepIndex + 1)
@@ -351,7 +368,7 @@ export default function AnnotationOverlay() {
     for (const active of shapesRef.current) {
       const fadeT = Math.min(1, (timestamp - active.createdAt) / FADE_IN_MS);
       const strokeT = Math.min(1, (timestamp - active.createdAt) / DRAW_STROKE_MS);
-      drawShapeOnCanvas(ctx, active.shape, W, H, fadeT, strokeT);
+      drawShapeOnCanvas(ctx, active.shape, W, H, active.faded ? fadeT * FADED_SHAPE_ALPHA : fadeT, strokeT);
     }
 
     let pointerLabel = pointerLabelRef.current;

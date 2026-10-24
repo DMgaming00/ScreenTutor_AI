@@ -70,6 +70,7 @@ export function mapShapeThroughCaptureRegion(
       return { ...shape, coords: [p1.x, p1.y, p2.x, p2.y] };
     }
     case 'label':
+    case 'work':
     case 'rightangle': {
       const p = mapPt(a, b);
       const size = shape.kind === 'rightangle' ? scaleRadiusForRegion(d ?? 0.02, region) : d;

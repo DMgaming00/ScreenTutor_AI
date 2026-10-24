@@ -79,7 +79,9 @@ describe('Moss similarity cache', () => {
     const memory = new InMemoryService();
     await memory.semanticCacheSet('tutor:original', JSON.stringify({ spokenText: 'cached' }), 60);
     const moss = fakeMoss(0.95);
-    const cache = new SemanticCache(memory, true, new MossSimilarityIndex(moss, { indexName: 'i', minScore: 0.9, refreshSeconds: 30 }));
+    const index = new MossSimilarityIndex(moss, { indexName: 'i', minScore: 0.9, refreshSeconds: 30 });
+    await index.warm();
+    const cache = new SemanticCache(memory, true, index);
 
     const hint = buildTutorSimilarityHint({ ...input, question: 'Can you explain this step?' }, 'hash-1', []);
     const hit = await cache.lookup<{ spokenText: string }>('tutor:new-key', hint);
@@ -93,8 +95,32 @@ describe('Moss similarity cache', () => {
   it('treats low-similarity matches as misses', async () => {
     const memory = new InMemoryService();
     await memory.semanticCacheSet('tutor:original', '{"spokenText":"cached"}', 60);
-    const cache = new SemanticCache(memory, true, new MossSimilarityIndex(fakeMoss(0.5), { indexName: 'i', minScore: 0.9, refreshSeconds: 30 }));
+    const index = new MossSimilarityIndex(fakeMoss(0.5), { indexName: 'i', minScore: 0.9, refreshSeconds: 30 });
+    await index.warm();
+    const cache = new SemanticCache(memory, true, index);
     expect(await cache.lookup('tutor:new', buildTutorSimilarityHint(input, 'h', []))).toBeNull();
+  });
+
+  it('never makes a request wait for the index to load', async () => {
+    const moss = fakeMoss(0.95);
+    let finishLoad!: () => void;
+    (moss.loadIndex as any).mockImplementationOnce(() => new Promise((r) => (finishLoad = () => r('ok'))));
+    const index = new MossSimilarityIndex(moss, { indexName: 'i', minScore: 0.9, refreshSeconds: 30 });
+
+    expect(await index.findSimilar('q', { kind: 'tutor' })).toBeNull(); // still loading: immediate miss
+    finishLoad();
+    await index.warm();
+    expect(await index.findSimilar('q', { kind: 'tutor' })).toBe('tutor:original');
+  });
+
+  it('does not wait for similarity indexing when caching an answer', async () => {
+    const moss = fakeMoss(0.95);
+    (moss.addDocs as any).mockImplementation(() => new Promise(() => {})); // never resolves
+    const index = new MossSimilarityIndex(moss, { indexName: 'i', minScore: 0.9, refreshSeconds: 30 });
+    await index.warm();
+    const cache = new SemanticCache(new InMemoryService(), true, index);
+    await cache.set('k', { a: 1 }, 60, buildTutorSimilarityHint(input, 'h', []));
+    expect(await cache.get('k')).toEqual({ a: 1 });
   });
 
   it('creates the index on first run when loading fails', async () => {

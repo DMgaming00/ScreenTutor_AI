@@ -11,3 +11,4 @@ redis-data/
 __pycache__/
 *_data.json
 .convex-tmp/
+.bench/

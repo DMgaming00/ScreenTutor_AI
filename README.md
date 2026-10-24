@@ -81,7 +81,9 @@ For real-time multi-modal screen capture analysis and chat responses.
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 CLAUDE_MODEL=claude-opus-5-5   # default
 CLAUDE_EFFORT=low              # raise to medium/high for harder diagrams
+CLAUDE_SPEED=fast              # default: Opus fast mode (~2.5x faster, premium price); "standard" to save cost
 ```
+Measured on a geometry screenshot (full answer): Opus 5.5 standard 16.7 s, **Opus 5.5 fast 6.7 s**, Sonnet 5.5 with `CLAUDE_THINKING=off` 8.6 s, Haiku 5.5 with thinking off 4.5 s.
 Responses use structured outputs (JSON schema), the system prompt is prompt-cached, and refusals fall back server-side.
 
 ### Cartesia (Voice)

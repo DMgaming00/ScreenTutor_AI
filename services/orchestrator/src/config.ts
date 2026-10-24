@@ -16,6 +16,13 @@ export const config = {
   /** low keeps first-token latency down for interactive tutoring; raise for harder diagrams */
   CLAUDE_EFFORT: (process.env.CLAUDE_EFFORT || 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
   CLAUDE_MAX_TOKENS: parseInt(process.env.CLAUDE_MAX_TOKENS || '16000', 10),
+  /**
+   * fast = Opus fast mode: same model, ~2.5x faster (measured 16.7s -> 6.7s per answer)
+   * at premium pricing. Ignored on non-Opus models. Set CLAUDE_SPEED=standard to save cost.
+   */
+  CLAUDE_SPEED: (process.env.CLAUDE_SPEED === 'standard' ? 'standard' : 'fast') as 'standard' | 'fast',
+  /** off = no thinking (Sonnet 5.5 / Haiku 5.5 only; Opus 5.5 always thinks) */
+  CLAUDE_THINKING: (process.env.CLAUDE_THINKING === 'off' ? 'off' : 'adaptive') as 'adaptive' | 'off',
 
   /** Convex deployment URL (printed by `npx convex dev`), e.g. https://happy-otter-123.convex.cloud */
   CONVEX_URL: process.env.CONVEX_URL || '',

@@ -24,6 +24,41 @@ export const TUTOR_OUTPUT_SCHEMA = {
 
 /** Server-side refusal fallback, routed by refusal category. */
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+const FAST_MODE_BETA = 'fast-mode-2026-02-01';
+
+/**
+ * Latency knobs that depend on the model:
+ * - speed "fast": Opus fast mode (same model, ~2.5x output speed, premium price)
+ * - thinking "off": Sonnet 5.5 uses `between_tools`, Haiku 5.5 `disabled`;
+ *   Opus 5.5 cannot turn thinking off, so it keeps adaptive thinking.
+ */
+export function speedOptions(
+  model: string,
+  speed: 'standard' | 'fast',
+  thinking: 'adaptive' | 'off'
+): Record<string, unknown> {
+  const betas: string[] = [];
+  const options: Record<string, unknown> = {};
+  const isOpus = /opus-(5|4-8)/.test(model);
+  const isSonnet55 = model.startsWith('claude-sonnet-5-5');
+  const isHaiku55 = model.startsWith('claude-haiku-5-5');
+
+  if (speed === 'fast' && isOpus) {
+    betas.push(FAST_MODE_BETA);
+    options.speed = 'fast';
+  }
+  if (thinking === 'off') {
+    if (isSonnet55) options.thinking = { type: 'between_tools' };
+    else if (isHaiku55) options.thinking = { type: 'disabled' };
+  }
+  // Haiku 5.5 has no server-side refusal fallback; sending one is a 400.
+  if (!isHaiku55) {
+    betas.push(FALLBACK_BETA);
+    options.fallbacks = 'default';
+  }
+  if (betas.length > 0) options.betas = betas;
+  return options;
+}
 
 type MediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
@@ -66,26 +101,16 @@ export class ClaudeProvider implements AIProvider {
     content.push({ type: 'text', text: promptText });
 
     try {
-      const stream = this.anthropic.beta.messages.stream({
-        model: config.CLAUDE_MODEL,
-        max_tokens: config.CLAUDE_MAX_TOKENS,
-        system: buildSystemBlocks(systemPromptOverride),
-        messages: [{ role: 'user', content }],
-        output_config: {
-          effort: config.CLAUDE_EFFORT,
-          format: { type: 'json_schema', schema: TUTOR_OUTPUT_SCHEMA },
-        },
-        betas: [FALLBACK_BETA],
-        // SDK types only model the array form; "default" picks the fallback per refusal category.
-        fallbacks: 'default' as unknown as Anthropic.Beta.Messages.BetaFallbackParam[],
-      });
-
-      if (onDelta) {
-        const spoken = new JsonStringFieldStreamer('spokenText', onDelta);
-        stream.on('text', (textDelta) => spoken.push(textDelta));
-      }
-
-      const finalMessage = await stream.finalMessage();
+      const finalMessage = await this.streamOnce(content, systemPromptOverride, config.CLAUDE_SPEED, onDelta).catch(
+        (err) => {
+          // Fast mode has its own rate limit; on a 429 retry once at standard speed.
+          if (config.CLAUDE_SPEED === 'fast' && err instanceof Anthropic.RateLimitError) {
+            console.warn('[Tutor] Fast mode rate-limited, retrying at standard speed.');
+            return this.streamOnce(content, systemPromptOverride, 'standard', onDelta);
+          }
+          throw err;
+        }
+      );
       logUsage(finalMessage.usage);
 
       if (finalMessage.stop_reason === 'refusal') {
@@ -138,6 +163,32 @@ export class ClaudeProvider implements AIProvider {
       console.error('Claude request or validation failed:', error);
       throw error;
     }
+  }
+
+  private async streamOnce(
+    content: Anthropic.ContentBlockParam[],
+    systemPromptOverride: string | undefined,
+    speed: 'standard' | 'fast',
+    onDelta?: (text: string) => void
+  ) {
+    // Typed loosely: speedOptions adds fields (speed, string `fallbacks`) newer than this SDK's types.
+    const params: any = {
+      model: config.CLAUDE_MODEL,
+      max_tokens: config.CLAUDE_MAX_TOKENS,
+      system: buildSystemBlocks(systemPromptOverride),
+      messages: [{ role: 'user', content }],
+      output_config: {
+        effort: config.CLAUDE_EFFORT,
+        format: { type: 'json_schema', schema: TUTOR_OUTPUT_SCHEMA },
+      },
+      ...speedOptions(config.CLAUDE_MODEL, speed, config.CLAUDE_THINKING),
+    };
+    const stream = this.anthropic.beta.messages.stream(params);
+    if (onDelta) {
+      const spoken = new JsonStringFieldStreamer('spokenText', onDelta);
+      stream.on('text', (textDelta) => spoken.push(textDelta));
+    }
+    return stream.finalMessage();
   }
 }
 

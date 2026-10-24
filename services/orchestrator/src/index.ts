@@ -135,11 +135,13 @@ async function getObservability(): Promise<ObservabilityService> {
 async function getSimilarityIndex(): Promise<SimilarityIndex | null> {
   if (!config.SEMANTIC_CACHE_ENABLED || !config.MOSS_PROJECT_ID || !config.MOSS_PROJECT_KEY) return null;
   const { MossSimilarityIndex } = await import('./cache/moss-index.js');
-  return MossSimilarityIndex.fromCredentials(config.MOSS_PROJECT_ID, config.MOSS_PROJECT_KEY, {
+  const index = MossSimilarityIndex.fromCredentials(config.MOSS_PROJECT_ID, config.MOSS_PROJECT_KEY, {
     indexName: config.MOSS_INDEX_NAME,
     minScore: config.MOSS_MIN_SCORE,
     refreshSeconds: 30,
   });
+  void index.warm();
+  return index;
 }
 
 let orchestratorInstance: TutorOrchestrator | null = null;
@@ -197,6 +199,8 @@ const start = async () => {
   try {
     await fastify.listen({ port: config.ORCHESTRATOR_PORT, host: '0.0.0.0' });
     console.log(`Server listening at http://localhost:${config.ORCHESTRATOR_PORT}`);
+    // Build services now so the first question doesn't pay for Convex/Moss setup.
+    getOrchestrator().catch((err) => console.warn('Orchestrator warm-up failed:', err.message));
     console.log(`AI Provider: ${config.ANTHROPIC_API_KEY ? 'claude' : 'none'}`);
     console.log(`Apify Research Configured: ${!!config.APIFY_API_TOKEN} (Enabled: ${config.APIFY_ENABLED})`);
     console.log(`Co-drive (Claude computer use): ${config.CODRIVE_ENABLED && !!config.ANTHROPIC_API_KEY} (Desktop control: ${config.ENABLE_SAFE_ACTIONS})`);

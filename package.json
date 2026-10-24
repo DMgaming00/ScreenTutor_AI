@@ -2,7 +2,7 @@
   "name": "screentutor-ai",
   "version": "0.1.0",
   "private": true,
-  "description": "ScreenTutor AI — an always-available desktop AI tutor that draws on your screen",
+  "description": "ScreenTutor AI \u2014 an always-available desktop AI tutor that draws on your screen",
   "scripts": {
     "dev": "concurrently \"pnpm dev:orchestrator\" \"pnpm dev:desktop\"",
     "dev:orchestrator": "pnpm --filter @screentutor/orchestrator dev",
@@ -21,11 +21,5 @@
   "engines": {
     "node": ">=20.19.0",
     "pnpm": ">=9.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "koffi"
-    ]
   }
 }

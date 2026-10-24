@@ -22,7 +22,11 @@ export interface ClearDrawingsEvent {
 export type StreamEvent = PointEvent | DrawShapeEvent | ClearDrawingsEvent;
 
 export interface CanvasDrawShape {
-  kind: 'circle' | 'rect' | 'arrow' | 'underline' | 'highlight' | 'label' | 'rightangle';
+  /**
+   * `work` is a written solution line (e.g. an equation) placed in blank space; unlike
+   * other shapes it stays on screen for the rest of the explanation.
+   */
+  kind: 'circle' | 'rect' | 'arrow' | 'underline' | 'highlight' | 'label' | 'rightangle' | 'work';
   /** Normalized 0–1 coordinates; meaning depends on kind */
   coords: number[];
   label?: string;
@@ -92,6 +96,9 @@ function parseDrawContent(content: string): CanvasDrawShape | 'clear' | null {
     case 'label':
       if (nums.length < 2 || nums.some(isNaN)) return null;
       return { kind: 'label', coords: nums.slice(0, 2), label: label || 'label' };
+    case 'work':
+      if (nums.length < 2 || nums.some(isNaN) || !label) return null;
+      return { kind: 'work', coords: nums.slice(0, 2), label };
     case 'rightangle': {
       if (nums.length < 2 || nums.some(isNaN)) return null;
       const size = nums.length >= 3 && !isNaN(nums[2]) ? nums[2] : 0.02;

@@ -33,6 +33,7 @@ interface MossIndexOptions {
  */
 export class MossSimilarityIndex implements SimilarityIndex {
   private ready: Promise<boolean> | null = null;
+  private loaded = false;
 
   constructor(
     private client: MossLike,
@@ -43,12 +44,25 @@ export class MossSimilarityIndex implements SimilarityIndex {
     return new MossSimilarityIndex(new MossClient(projectId, projectKey) as unknown as MossLike, options);
   }
 
+  /**
+   * Start loading at server startup. Loading takes seconds (index download +
+   * embedding model), so it must never sit on a tutoring request.
+   */
+  warm(): Promise<boolean> {
+    return this.ensureLoaded();
+  }
+
   /** Loads (creating if needed) the index once; false means similarity is off. */
   private ensureLoaded(): Promise<boolean> {
-    this.ready ??= this.load().catch((err) => {
-      console.warn('[Moss] Similarity index unavailable, exact-match cache only:', err?.message ?? err);
-      return false;
-    });
+    this.ready ??= this.load()
+      .then((ok) => {
+        this.loaded = ok;
+        return ok;
+      })
+      .catch((err) => {
+        console.warn('[Moss] Similarity index unavailable, exact-match cache only:', err?.message ?? err);
+        return false;
+      });
     return this.ready;
   }
 
@@ -68,7 +82,11 @@ export class MossSimilarityIndex implements SimilarityIndex {
   }
 
   async findSimilar(text: string, scope: Record<string, string>): Promise<string | null> {
-    if (!(await this.ensureLoaded())) return null;
+    // Not loaded yet: answer "no match" now rather than wait for the download.
+    if (!this.loaded) {
+      void this.warm();
+      return null;
+    }
     const result = await this.client.query(this.options.indexName, text, {
       topK: 1,
       minScore: this.options.minScore,

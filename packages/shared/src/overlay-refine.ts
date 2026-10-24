@@ -128,6 +128,10 @@ export function dedupeRedundantTagLabels(text: string): string {
           result += match[0];
           pointLabelInStep = undefined;
           drawIndex = 0;
+        } else if (/^\s*work:/i.test(content)) {
+          // Working lines intentionally repeat the sentence's math: keep them verbatim.
+          result += match[0];
+          drawIndex++;
         } else {
           const rewritten = dedupeDrawInner(content, proseSoFar, pointLabelInStep);
           if (rewritten !== null) {
@@ -150,7 +154,7 @@ export function stripDuplicateShapeLabel(
   shape: CanvasDrawShape,
   pointerLabel: string | undefined
 ): CanvasDrawShape {
-  if (!shape.label || !pointerLabel) return shape;
+  if (!shape.label || !pointerLabel || shape.kind === 'work') return shape;
   if (!labelsEquivalent(shape.label, pointerLabel)) return shape;
   return { ...shape, label: undefined };
 }
@@ -321,6 +325,11 @@ export function refineOverlayAnnotationTags(text: string): string {
         shape = { kind: 'label', coords: nums.slice(0, 2), label: label || 'label' };
       } else if (kindDraw === 'rightangle' && nums.length >= 2) {
         shape = { kind: 'rightangle', coords: [nums[0], nums[1], nums[2] ?? 0.02] };
+      } else if (kindDraw === 'work' && nums.length >= 2 && label) {
+        // Working lines live in blank space by design: never snap them to the pointer.
+        const work = sanitizeDrawShape({ kind: 'work', coords: nums.slice(0, 2), label });
+        if (work) parts.push(formatDrawTag(work));
+        shape = null;
       }
 
       if (shape) {
@@ -356,6 +365,8 @@ function formatDrawTag(shape: CanvasDrawShape): string {
       return `[DRAW:label:${shape.coords.join(',')}${label}]`;
     case 'rightangle':
       return `[DRAW:rightangle:${shape.coords.join(',')}]`;
+    case 'work':
+      return `[DRAW:work:${shape.coords.join(',')}${label}]`;
     default:
       return '';
   }

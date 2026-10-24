@@ -9,6 +9,8 @@ import type { TutorInput, TutorResponse } from '@screentutor/shared';
 export interface SimilarityIndex {
   findSimilar(text: string, scope: Record<string, string>): Promise<string | null>;
   add(key: string, text: string, scope: Record<string, string>): Promise<void>;
+  /** Optional: begin any slow setup (e.g. loading the index) ahead of the first request. */
+  warm?(): unknown;
 }
 
 /** What a similarity lookup may match on: the text, but only inside `scope`. */
@@ -59,7 +61,10 @@ export class SemanticCache {
     try {
       await this.memory.semanticCacheSet(key, JSON.stringify(value), ttlSeconds);
       if (this.similarity && hint) {
-        await this.similarity.add(key, hint.text, hint.scope);
+        // Indexing is a multi-second network call (measured ~3.6s on Moss); never wait on it.
+        this.similarity.add(key, hint.text, hint.scope).catch((err) => {
+          console.warn('[SemanticCache] Failed to index entry for similarity:', err);
+        });
       }
     } catch (err) {
       console.warn('[SemanticCache] Failed to write cache entry:', err);

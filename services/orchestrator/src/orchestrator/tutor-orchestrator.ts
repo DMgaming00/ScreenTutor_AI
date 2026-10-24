@@ -196,7 +196,8 @@ export class TutorOrchestrator {
 
           if (canUseSemanticCache) {
             const cacheKey = buildTutorResponseCacheKey(input, screenshotHash, weakConceptNames);
-            await this.semanticCache.set(
+            // Not needed for this answer: write it in the background.
+            void this.semanticCache.set(
               cacheKey,
               sanitizeResponseForCache(response),
               config.TUTOR_CACHE_TTL_SECONDS,

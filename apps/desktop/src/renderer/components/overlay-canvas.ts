@@ -70,6 +70,32 @@ export function drawCanvasLabel(
   ctx.restore();
 }
 
+/** A written solution line ("working"), left-anchored at (x, y) and sized to the screen. */
+export function drawWorkLine(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, minDim: number) {
+  const fontSize = Math.round(Math.max(18, Math.min(30, minDim * 0.024)));
+  ctx.save();
+  ctx.shadowBlur = 0;
+  ctx.font = `600 ${fontSize}px "JetBrains Mono", "Fira Code", ui-monospace, monospace`;
+  const padX = fontSize * 0.6;
+  const padY = fontSize * 0.35;
+  const boxW = ctx.measureText(text).width + padX * 2;
+  const boxH = fontSize + padY * 2;
+  const boxX = Math.min(x, ctx.canvas.clientWidth - boxW - 8);
+  const boxY = y - boxH / 2;
+  ctx.fillStyle = 'rgba(10, 14, 30, 0.86)';
+  ctx.strokeStyle = 'rgba(255, 196, 61, 0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(boxX, boxY, boxW, boxH, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ffe39a';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, boxX + padX, y);
+  ctx.restore();
+}
+
 export function drawShapeOnCanvas(
   ctx: CanvasRenderingContext2D,
   shape: CanvasDrawShape,
@@ -199,6 +225,13 @@ export function drawShapeOnCanvas(
       ctx.translate(-a * W, -b * H);
       drawCanvasLabel(ctx, a * W, b * H, text, { equation, alpha: t });
       ctx.restore();
+      break;
+    }
+    case 'work': {
+      // Typed on left-to-right as it appears; stays for the rest of the explanation.
+      const text = shape.label ?? '';
+      const shown = text.slice(0, Math.max(1, Math.ceil(text.length * t)));
+      drawWorkLine(ctx, a * W, b * H, shown, minDim);
       break;
     }
     case 'rightangle': {

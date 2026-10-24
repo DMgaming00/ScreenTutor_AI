@@ -6,7 +6,8 @@ const MAX_RECT_H = 0.22;
 const MIN_RECT_SIZE = 0.04;
 const MAX_CIRCLE_R = 0.06;
 const MIN_CIRCLE_R = 0.015;
-const MAX_ARROW_SPAN = 0.5;
+/** Long enough for a diagram diagonal (e.g. a hypotenuse), short enough to stop runaway arrows */
+const MAX_ARROW_SPAN = 0.85;
 
 function clamp01(n: number): number {
   if (isNaN(n)) return 0;
@@ -50,7 +51,8 @@ export function sanitizeDrawShape(shape: CanvasDrawShape): CanvasDrawShape | nul
       }
       return { ...shape, coords: [sx, sy, ex, ey] };
     }
-    case 'label': {
+    case 'label':
+    case 'work': {
       const [x, y] = shape.coords;
       if ([x, y].some((n) => isNaN(n))) return null;
       return { ...shape, coords: [clamp01(x), clamp01(y)] };
