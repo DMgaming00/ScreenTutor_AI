@@ -1,6 +1,15 @@
 import { config } from '../config.js';
 import crypto from 'crypto';
 import { RedactionService } from '@screentutor/shared';
+import { context, trace, SpanKind, SpanStatusCode, type Attributes, type Context, type Span, type Tracer } from '@opentelemetry/api';
+import {
+  BasicTracerProvider,
+  BatchSpanProcessor,
+  SimpleSpanProcessor,
+  type SpanExporter,
+} from '@opentelemetry/sdk-trace-base';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 
 export interface ObservabilityService {
   startTrace(name: string, metadata?: Record<string, any>): string;
@@ -31,195 +40,112 @@ export class NoopObservabilityService implements ObservabilityService {
   endTrace(traceId: string, metadata?: Record<string, any>): void {}
 }
 
-export class ArizePhoenixObservabilityService implements ObservabilityService {
-  private activeTraces = new Map<string, {
-    name: string;
-    startTimeUnixNano: string;
-    metadata: Record<string, any>;
-    spans: Array<{
-      spanId: string;
-      parentSpanId?: string;
-      name: string;
-      startTimeUnixNano: string;
-      endTimeUnixNano?: string;
-      metadata: Record<string, any>;
-    }>;
-    events: Array<{
-      name: string;
-      timeUnixNano: string;
-      metadata: Record<string, any>;
-    }>;
-    evaluations: Array<{
-      name: string;
-      score: number;
-      metadata: Record<string, any>;
-    }>;
-  }>();
+interface OtlpOptions {
+  /** OTLP/HTTP base URL; traces go to `${endpoint}/v1/traces` */
+  endpoint: string;
+  /** Extra exporter headers, e.g. { Authorization: 'ApiKey ...' } for Elastic */
+  headers?: Record<string, string>;
+  serviceName?: string;
+  environment?: string;
+}
 
-  private arizeQueue: any[] = [];
-  private flushTimer: NodeJS.Timeout | null = null;
+interface ActiveTrace {
+  root: Span;
+  current?: Span;
+  ctx: Context;
+}
 
-  constructor(private apiKey: string, private collectorEndpoint: string) {
-    this.startFlushTimer();
-  }
+/**
+ * Exports tutor traces over OTLP/HTTP (protobuf) — Elastic Observability's
+ * managed OTLP endpoint, or any OTel collector. Each pipeline step is a child
+ * span that ends when the next one starts, so step latencies are real.
+ *
+ * Uses its own provider (never registered globally) so it does not interfere
+ * with Sentry's OpenTelemetry setup.
+ */
+export class OtlpObservabilityService implements ObservabilityService {
+  private provider: BasicTracerProvider;
+  private tracer: Tracer;
+  private traces = new Map<string, ActiveTrace>();
 
-  private startFlushTimer() {
-    if (this.flushTimer) return;
-    this.flushTimer = setInterval(() => {
-      this.flushQueue().catch(err => {
-        console.error('[Arize/Phoenix] Error in background flush:', err.message);
+  constructor(private options: OtlpOptions, exporter?: SpanExporter) {
+    const spanExporter =
+      exporter ??
+      new OTLPTraceExporter({
+        url: `${options.endpoint.replace(/\/+$/, '')}/v1/traces`,
+        headers: options.headers,
       });
-    }, 10000);
-    
-    if (this.flushTimer && typeof this.flushTimer.unref === 'function') {
-      this.flushTimer.unref();
-    }
-  }
-
-  private async flushQueue(): Promise<void> {
-    if (this.arizeQueue.length === 0 || !this.collectorEndpoint) return;
-
-    const resourceSpans = [...this.arizeQueue];
-    this.arizeQueue = [];
-
-    const otlpPayload = {
-      resourceSpans
-    };
-
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (this.apiKey) {
-        headers['space-key'] = this.apiKey;
-      }
-
-      await fetch(this.collectorEndpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(otlpPayload)
-      });
-    } catch (err: any) {
-      console.error('[Arize/Phoenix] Failed to post telemetry traces:', err.message);
-    }
+    this.provider = new BasicTracerProvider({
+      resource: resourceFromAttributes({
+        'service.name': options.serviceName ?? 'screentutor-orchestrator',
+        'deployment.environment': options.environment ?? config.NODE_ENV,
+      }),
+      spanProcessors: [exporter ? new SimpleSpanProcessor(spanExporter) : new BatchSpanProcessor(spanExporter)],
+    });
+    this.tracer = this.provider.getTracer('screentutor-traces');
   }
 
   isConfigured(): boolean {
-    return !!this.collectorEndpoint;
+    return !!this.options.endpoint;
   }
 
   startTrace(name: string, metadata?: Record<string, any>): string {
-    const traceId = crypto.randomBytes(16).toString('hex');
-    const cleanedMeta = this.scrubMetadata(metadata);
-    
-    this.activeTraces.set(traceId, {
-      name,
-      startTimeUnixNano: (Date.now() * 1000000).toString(),
-      metadata: cleanedMeta,
-      spans: [],
-      events: [],
-      evaluations: []
-    });
-
+    const root = this.tracer.startSpan(name, { kind: SpanKind.SERVER, attributes: toAttributes(this.scrub(metadata)) });
+    const traceId = root.spanContext().traceId;
+    this.traces.set(traceId, { root, ctx: trace.setSpan(context.active(), root) });
     return traceId;
   }
 
   addSpan(traceId: string, name: string, metadata?: Record<string, any>): string {
-    const trace = this.activeTraces.get(traceId);
-    const spanId = crypto.randomBytes(8).toString('hex');
-    if (trace) {
-      const parentSpanId = trace.spans.length > 0 ? trace.spans[trace.spans.length - 1].spanId : undefined;
-      trace.spans.push({
-        spanId,
-        parentSpanId,
-        name,
-        startTimeUnixNano: (Date.now() * 1000000).toString(),
-        metadata: this.scrubMetadata(metadata)
-      });
-    }
-    return spanId;
+    const active = this.traces.get(traceId);
+    if (!active) return '';
+    active.current?.end();
+    const span = this.tracer.startSpan(name, { attributes: toAttributes(this.scrub(metadata)) }, active.ctx);
+    active.current = span;
+    return span.spanContext().spanId;
   }
 
   recordEvent(traceId: string, eventName: string, metadata?: Record<string, any>): void {
-    const trace = this.activeTraces.get(traceId);
-    if (trace) {
-      trace.events.push({
-        name: eventName,
-        timeUnixNano: (Date.now() * 1000000).toString(),
-        metadata: this.scrubMetadata(metadata)
-      });
-    }
+    const active = this.traces.get(traceId);
+    if (!active) return;
+    (active.current ?? active.root).addEvent(eventName, toAttributes(this.scrub(metadata)));
   }
 
   recordEvaluation(traceId: string, evalName: string, score: number, metadata?: Record<string, any>): void {
-    const trace = this.activeTraces.get(traceId);
-    if (trace) {
-      trace.evaluations.push({
-        name: evalName,
-        score,
-        metadata: this.scrubMetadata(metadata)
-      });
+    const active = this.traces.get(traceId);
+    if (!active) return;
+    active.root.setAttribute(`eval.${evalName}`, score);
+    active.root.addEvent(`evaluation.${evalName}`, { score, ...toAttributes(this.scrub(metadata)) });
+  }
+
+  endTrace(traceId: string, metadata?: Record<string, any>): void {
+    const active = this.traces.get(traceId);
+    if (!active) return;
+    this.traces.delete(traceId);
+    const attrs = this.scrub(metadata);
+    active.root.setAttributes(toAttributes(attrs));
+    if (attrs.errorType) {
+      active.root.setStatus({ code: SpanStatusCode.ERROR, message: String(attrs.errorMessage ?? attrs.errorType) });
     }
+    active.current?.end();
+    active.root.end();
   }
 
-  async endTrace(traceId: string, metadata?: Record<string, any>): Promise<void> {
-    const trace = this.activeTraces.get(traceId);
-    if (!trace) return;
-
-    const endTimeUnixNano = (Date.now() * 1000000).toString();
-    const finalMeta = { ...trace.metadata, ...this.scrubMetadata(metadata) };
-    
-    // Auto-close open spans
-    for (const span of trace.spans) {
-      if (!span.endTimeUnixNano) {
-        span.endTimeUnixNano = endTimeUnixNano;
-      }
-    }
-
-    this.activeTraces.delete(traceId);
-
-    const resourceSpan = {
-      resource: {
-        attributes: [
-          { key: 'service.name', value: { stringValue: 'screentutor-orchestrator' } },
-          { key: 'arize.project', value: { stringValue: 'screentutor' } }
-        ]
-      },
-      scopeSpans: [{
-        scope: { name: 'screentutor-traces' },
-        spans: trace.spans.map(span => ({
-          traceId,
-          spanId: span.spanId,
-          parentSpanId: span.parentSpanId,
-          name: span.name,
-          kind: 1, // INTERNAL
-          startTimeUnixNano: span.startTimeUnixNano,
-          endTimeUnixNano: span.endTimeUnixNano,
-          attributes: Object.entries({ ...span.metadata, ...finalMeta }).map(([k, v]) => ({
-            key: k,
-            value: this.formatAttributeValue(v)
-          })),
-          events: trace.events.map(ev => ({
-            name: ev.name,
-            timeUnixNano: ev.timeUnixNano,
-            attributes: Object.entries(ev.metadata).map(([k, v]) => ({
-              key: k,
-              value: this.formatAttributeValue(v)
-            }))
-          }))
-        }))
-      }]
-    };
-
-    this.arizeQueue.push(resourceSpan);
+  /** Flush buffered spans (call on shutdown). */
+  async shutdown(): Promise<void> {
+    await this.provider.shutdown();
   }
 
-  private scrubMetadata(metadata?: Record<string, any>): Record<string, any> {
-    if (!metadata) return {};
-    return RedactionService.redactMetadata(metadata);
+  private scrub(metadata?: Record<string, any>): Record<string, any> {
+    return metadata ? RedactionService.redactMetadata(metadata) : {};
   }
+}
 
-  private formatAttributeValue(val: any) {
-    if (typeof val === 'boolean') return { boolValue: val };
-    if (typeof val === 'number') return { doubleValue: val };
-    return { stringValue: String(val) };
+function toAttributes(metadata: Record<string, any>): Attributes {
+  const attrs: Attributes = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === undefined || value === null) continue;
+    attrs[key] = typeof value === 'number' || typeof value === 'boolean' ? value : String(value);
   }
+  return attrs;
 }

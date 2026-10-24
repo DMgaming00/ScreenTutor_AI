@@ -5,8 +5,8 @@ export const researchRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/api/research', async (request, reply) => {
     try {
       const req = ResearchRequest.parse(request.body);
-      const browserbase = await fastify.getBrowserbase();
-      const result = await browserbase.researchConcept(req.concept, req.learnerLevel, req.screenSummary);
+      const research = await fastify.getResearch();
+      const result = await research.researchConcept(req.concept, req.learnerLevel, req.screenSummary);
       return result;
     } catch (err: any) {
       const safeError = RedactionService.redactError(err);
@@ -20,8 +20,8 @@ export const researchRoutes: FastifyPluginAsync = async (fastify) => {
       if (!concept) {
         return reply.status(400).send({ error: 'Concept parameter is required' });
       }
-      const browserbase = await fastify.getBrowserbase();
-      const explanation = await browserbase.findSimplerExplanation(concept);
+      const research = await fastify.getResearch();
+      const explanation = await research.findSimplerExplanation(concept);
       return { explanation };
     } catch (err: any) {
       const safeError = RedactionService.redactError(err);
@@ -35,8 +35,8 @@ export const researchRoutes: FastifyPluginAsync = async (fastify) => {
       if (!concept) {
         return reply.status(400).send({ error: 'Concept parameter is required' });
       }
-      const browserbase = await fastify.getBrowserbase();
-      const practice = await browserbase.generatePracticeFromWebResource(concept);
+      const research = await fastify.getResearch();
+      const practice = await research.generatePracticeFromWebResource(concept);
       return { practice };
     } catch (err: any) {
       const safeError = RedactionService.redactError(err);

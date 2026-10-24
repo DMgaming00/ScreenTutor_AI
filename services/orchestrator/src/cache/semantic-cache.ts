@@ -2,11 +2,46 @@ import { createHash } from 'crypto';
 import type { MemoryService } from '../memory/memory-service.js';
 import type { TutorInput, TutorResponse } from '@screentutor/shared';
 
+/**
+ * Finds a previously cached entry whose text means the same thing, within an
+ * exact-match scope (e.g. same screenshot + mode). Implemented by Moss.
+ */
+export interface SimilarityIndex {
+  findSimilar(text: string, scope: Record<string, string>): Promise<string | null>;
+  add(key: string, text: string, scope: Record<string, string>): Promise<void>;
+}
+
+/** What a similarity lookup may match on: the text, but only inside `scope`. */
+export interface SimilarityHint {
+  text: string;
+  scope: Record<string, string>;
+}
+
 export class SemanticCache {
   constructor(
     private memory: MemoryService | null,
-    private enabled: boolean
+    private enabled: boolean,
+    private similarity: SimilarityIndex | null = null
   ) {}
+
+  /**
+   * Exact key first; on a miss, a reworded question in the same scope can reuse
+   * an answer. Returns which path hit so callers can trace it.
+   */
+  async lookup<T>(key: string, hint?: SimilarityHint): Promise<{ value: T; match: 'exact' | 'similar' } | null> {
+    const exact = await this.get<T>(key);
+    if (exact !== null) return { value: exact, match: 'exact' };
+    if (!this.enabled || !this.similarity || !hint) return null;
+    try {
+      const similarKey = await this.similarity.findSimilar(hint.text, hint.scope);
+      if (!similarKey || similarKey === key) return null;
+      const similar = await this.get<T>(similarKey);
+      return similar !== null ? { value: similar, match: 'similar' } : null;
+    } catch (err) {
+      console.warn('[SemanticCache] Similarity lookup failed:', err);
+      return null;
+    }
+  }
 
   async get<T>(key: string): Promise<T | null> {
     if (!this.enabled || !this.memory) return null;
@@ -19,10 +54,13 @@ export class SemanticCache {
     }
   }
 
-  async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+  async set(key: string, value: unknown, ttlSeconds: number, hint?: SimilarityHint): Promise<void> {
     if (!this.enabled || !this.memory) return;
     try {
       await this.memory.semanticCacheSet(key, JSON.stringify(value), ttlSeconds);
+      if (this.similarity && hint) {
+        await this.similarity.add(key, hint.text, hint.scope);
+      }
     } catch (err) {
       console.warn('[SemanticCache] Failed to write cache entry:', err);
     }
@@ -49,6 +87,29 @@ export function buildTutorResponseCacheKey(
   ].join('|');
 
   return `tutor:${createHash('sha256').update(payload).digest('hex')}`;
+}
+
+/**
+ * Similarity scope for a tutor answer. Everything except the wording of the
+ * question must match exactly — an answer drawn for one screenshot is never
+ * reused on another.
+ */
+export function buildTutorSimilarityHint(
+  input: TutorInput,
+  screenshotHash: string | undefined,
+  weakConcepts: string[]
+): SimilarityHint {
+  return {
+    text: input.question.trim().toLowerCase(),
+    scope: {
+      kind: 'tutor',
+      mode: input.mode,
+      screenshot: screenshotHash ?? 'no-screenshot',
+      lesson: input.demoLessonId ?? '',
+      style: input.learnerPreferences?.explanationStyle ?? '',
+      weak: createHash('sha256').update([...weakConcepts].sort().join(',')).digest('hex').slice(0, 16),
+    },
+  };
 }
 
 /** Strip runtime-only fields before persisting a tutor response. */

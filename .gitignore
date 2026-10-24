@@ -5,3 +5,9 @@ out/
 *.log
 redis-data/
 *.mp4
+
+# Python (services/fetch-agent)
+.venv/
+__pycache__/
+*_data.json
+.convex-tmp/

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RealSimularService, MockSimularService, checkActionSafety } from '../integrations/simular.js';
+import { MockCoDriveService, checkActionSafety } from '../integrations/codrive.js';
 import type { ProposedAction } from '@screentutor/shared';
 
 describe('Action Safety Helper', () => {
@@ -143,9 +143,9 @@ describe('Action Safety Helper', () => {
   });
 });
 
-describe('MockSimularService', () => {
+describe('MockCoDriveService', () => {
   it('proposes blocked action for unsafe goals and blocks execution', async () => {
-    const service = new MockSimularService();
+    const service = new MockCoDriveService();
     const actions = await service.proposeActions('Delete files');
     expect(actions[0].status).toBe('blocked');
     expect(actions[0].reason).toContain('File deletion');
@@ -156,24 +156,11 @@ describe('MockSimularService', () => {
   });
 
   it('proposes safe action for safe goal and allows execution', async () => {
-    const service = new MockSimularService();
+    const service = new MockCoDriveService();
     const actions = await service.proposeActions('Click next button');
     expect(actions[0].status).toBe('proposed');
 
     const result = await service.executeApprovedAction(actions[0].id);
     expect(result.success).toBe(true);
-  });
-});
-
-describe('RealSimularService', () => {
-  it('behaves correctly based on enableSafeActions and blocks previously blocked proposals at execution', async () => {
-    const activeService = new RealSimularService('key', true);
-    const mockContext = { privacyMode: true };
-    const actions = await activeService.proposeActions('Click next', mockContext);
-    expect(actions[0].status).toBe('blocked');
-
-    const result = await activeService.executeApprovedAction(actions[0].id);
-    expect(result.success).toBe(false);
-    expect(result.message).toContain('blocked');
   });
 });

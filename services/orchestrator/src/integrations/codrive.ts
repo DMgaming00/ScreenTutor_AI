@@ -24,14 +24,27 @@ export interface ActionExecutionResult {
   success: boolean;
   message: string;
   timestamp: string;
+  /** Returned when the action is approved for the desktop app to perform */
+  action?: ProposedAction;
 }
 
-export interface SimularIntegration {
+/** What the orchestrator knows about the screen a Co-drive goal refers to. */
+export interface CoDriveScreenContext {
+  privacyMode?: boolean;
+  windowTitle?: string;
+  screenshotBase64?: string;
+  /** Pixel size of the screenshot sent to the model */
+  imageWidth?: number;
+  imageHeight?: number;
+  screenNumber?: number;
+}
+
+export interface CoDriveIntegration {
   isConfigured(): boolean;
   captureScreen(context?: any): Promise<ScreenCaptureResult | null>;
   getAccessibilityTree(): Promise<AccessibilityTreeResult>;
   locateElement(query: string, screenContext?: any): Promise<ElementLocationResult>;
-  proposeActions(goal: string, screenContext?: any): Promise<ProposedAction[]>;
+  proposeActions(goal: string, screenContext?: CoDriveScreenContext): Promise<ProposedAction[]>;
   executeApprovedAction(actionId: string): Promise<ActionExecutionResult>;
 }
 
@@ -86,76 +99,7 @@ export function checkActionSafety(action: Omit<ProposedAction, 'requiresApproval
   return { status: action.status };
 }
 
-export class RealSimularService implements SimularIntegration {
-  private proposedActionsMap = new Map<string, ProposedAction>();
-
-  constructor(private apiKey: string, private enableSafeActions: boolean) {}
-
-  isConfigured(): boolean {
-    return !!this.apiKey;
-  }
-
-  async captureScreen(context?: any): Promise<ScreenCaptureResult | null> {
-    return null;
-  }
-
-  async getAccessibilityTree(): Promise<AccessibilityTreeResult> {
-    return { nodes: [] };
-  }
-
-  async locateElement(query: string, screenContext?: any): Promise<ElementLocationResult> {
-    return { found: false, confidence: 0.0 };
-  }
-
-  async proposeActions(goal: string, screenContext?: any): Promise<ProposedAction[]> {
-    const rawAction: ProposedAction = {
-      id: 'real-action-1',
-      type: 'click',
-      description: `Click target to accomplish: ${goal}`,
-      riskLevel: 'low',
-      requiresApproval: true,
-      status: 'proposed'
-    };
-
-    const safety = checkActionSafety(rawAction, screenContext?.privacyMode || false, screenContext?.windowTitle);
-    rawAction.status = safety.status;
-    rawAction.reason = safety.reason;
-
-    this.proposedActionsMap.set(rawAction.id, rawAction);
-
-    return [rawAction];
-  }
-
-  async executeApprovedAction(actionId: string): Promise<ActionExecutionResult> {
-    const action = this.proposedActionsMap.get(actionId);
-    if (action && action.status === 'blocked') {
-      return {
-        actionId,
-        success: false,
-        message: `Action execution blocked: ${action.reason}`,
-        timestamp: new Date().toISOString()
-      };
-    }
-
-    if (!this.enableSafeActions) {
-      return {
-        actionId,
-        success: true,
-        message: 'Action executed successfully (Mocked - Safe actions disabled).',
-        timestamp: new Date().toISOString()
-      };
-    }
-
-    return {
-      actionId,
-      success: true,
-      message: 'Action executed successfully (Real - Simular controls enabled).',
-      timestamp: new Date().toISOString()
-    };
-  }
-}
-
-export class MockSimularService implements SimularIntegration {
+export class MockCoDriveService implements CoDriveIntegration {
   private proposedActionsMap = new Map<string, ProposedAction>();
 
   isConfigured(): boolean {
@@ -293,7 +237,7 @@ export class MockSimularService implements SimularIntegration {
     return {
       actionId,
       success: true,
-      message: 'Action executed successfully (Mocked - Simular controls disabled).',
+      message: 'Action executed successfully (Mocked - desktop control disabled).',
       timestamp: new Date().toISOString()
     };
   }

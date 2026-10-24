@@ -1,4 +1,4 @@
-import type { TutorInput, TutorResponse } from '@screentutor/shared';
+import type { TutorInput, TutorResponse, WeakConcept } from '@screentutor/shared';
 import type { AgentRouteDecision, AgentOutput, SpecialistAgent } from './agent-router.js';
 
 export interface FetchAgentProvider {
@@ -103,15 +103,40 @@ export class LocalAgentProvider implements FetchAgentProvider {
   }
 }
 
+interface FetchAgentOptions {
+  /** Base URL of the uAgent's REST server (services/fetch-agent), e.g. http://localhost:8001 */
+  baseUrl: string;
+  timeoutMs: number;
+}
+
+interface LearningPlanReply {
+  summary: string;
+  spokenText: string;
+  hints: string[];
+  concept: string;
+}
+
+const REMOTE_AGENTS = new Set(['LearningPlanAgent']);
+
+/**
+ * Routes through the ScreenTutor study-planner uAgent (registered on Agentverse)
+ * and lets it build learning plans. Agents that need the screenshot and Claude
+ * stay local. Any failure or timeout falls back to the local provider, so a
+ * stopped agent never breaks a tutoring turn.
+ */
 export class FetchAgentverseProvider implements FetchAgentProvider {
+  private local: LocalAgentProvider;
+
   constructor(
-    private apiKey: string,
-    private agentAddress: string,
-    private agents: Record<string, SpecialistAgent>
-  ) {}
+    private options: FetchAgentOptions,
+    private agents: Record<string, SpecialistAgent>,
+    private fetchImpl: typeof fetch = fetch
+  ) {
+    this.local = new LocalAgentProvider(agents);
+  }
 
   isConfigured(): boolean {
-    return !!this.apiKey && !!this.agentAddress;
+    return !!this.options.baseUrl;
   }
 
   getProviderName(): string {
@@ -119,86 +144,64 @@ export class FetchAgentverseProvider implements FetchAgentProvider {
   }
 
   async route(input: TutorInput, traceId?: string): Promise<AgentRouteDecision> {
-    if (!this.isConfigured()) {
-      return {
-        selectedAgent: 'MathTutorAgent',
-        reason: 'Fetch Agentverse credentials are not configured. Route fell back to MathTutorAgent.',
-        provider: 'Fetch AI Agentverse (Unconfigured)'
-      };
-    }
-
-    // Message envelope matching Fetch AI protocols:
-    const routingEnvelope = {
-      sender: this.agentAddress,
-      destination: 'agentverse://tutor-router',
-      protocol: 'tutor-routing-v1',
-      payload: {
-        task: 'route',
-        input: {
-          question: input.question,
-          mode: input.mode,
-          timestamp: new Date().toISOString()
-        }
+    try {
+      const reply = await this.post<{ selectedAgent: string; reason: string }>('/route', {
+        question: input.question,
+        mode: input.mode,
+      });
+      if (this.agents[reply.selectedAgent]) {
+        return { selectedAgent: reply.selectedAgent, reason: reply.reason, provider: this.getProviderName() };
       }
-    };
-
-    console.log(`[Fetch Agentverse] Sending routing message to Agentverse router Agent:`, JSON.stringify(routingEnvelope, null, 2));
-
-    // Evaluate routing locally for stub execution:
-    const localProvider = new LocalAgentProvider(this.agents);
-    const decision = await localProvider.route(input, traceId);
-    decision.provider = 'Fetch AI Agentverse';
-
-    return decision;
+      console.warn(`[Fetch Agentverse] Unknown agent "${reply.selectedAgent}", routing locally.`);
+    } catch (err) {
+      console.warn('[Fetch Agentverse] Route call failed, routing locally:', (err as Error).message);
+    }
+    const decision = await this.local.route(input, traceId);
+    return { ...decision, provider: 'Local Provider (Fetch fallback)' };
   }
 
   async execute(agentType: string, input: TutorInput, onDelta?: (text: string) => void, traceId?: string): Promise<AgentOutput> {
-    if (!this.isConfigured()) {
-      return {
-        agentType,
-        response: {
-          summary: 'Fetch AI / Agentverse Integration is not configured.',
-          spokenText: 'I cannot process this agent request because the Fetch AI Agentverse credentials (FETCH_AGENTVERSE_API_KEY / FETCH_AGENTVERSE_AGENT_ADDRESS) are missing. Fall back to local mode in settings.',
-          drawings: [],
-          concept: 'unconfigured_error',
-          confidence: 0.0,
-          provider: 'Fetch AI Agentverse (Unconfigured)'
-        }
-      };
-    }
-
-    // Message envelope matching Fetch AI protocols:
-    const executionEnvelope = {
-      sender: this.agentAddress,
-      destination: `agentverse://${agentType.toLowerCase()}`,
-      protocol: 'tutor-execution-v1',
-      payload: {
-        task: 'execute',
-        agentType,
-        input: {
-          userId: input.userId,
-          sessionId: input.sessionId,
-          question: input.question,
-          mode: input.mode,
-          timestamp: new Date().toISOString()
-        }
+    if (REMOTE_AGENTS.has(agentType)) {
+      try {
+        const weakConcepts = (input.learnerMemory?.weakConcepts ?? []) as WeakConcept[];
+        const plan = await this.post<LearningPlanReply>('/learning-plan', {
+          weakConcepts: weakConcepts.map((c) => ({
+            concept: c.concept,
+            confidence: c.confidence,
+            timesSeen: c.timesSeen,
+            lastSeenAt: c.lastSeenAt,
+          })),
+        });
+        onDelta?.(plan.spokenText);
+        return {
+          agentType,
+          response: {
+            summary: plan.summary,
+            spokenText: plan.spokenText,
+            drawings: [],
+            concept: plan.concept,
+            confidence: 0.9,
+            hints: plan.hints,
+            provider: this.getProviderName(),
+          },
+        };
+      } catch (err) {
+        console.warn(`[Fetch Agentverse] ${agentType} failed, running locally:`, (err as Error).message);
       }
-    };
-
-    console.log(`[Fetch Agentverse] Dispaching execution message to Agentverse agent:`, JSON.stringify(executionEnvelope, null, 2));
-
-    // Delegate to local implementation for stub fallback, marking provider:
-    const agent = this.agents[agentType];
-    if (!agent) {
-      throw new Error(`Specialist agent type ${agentType} not found in FetchAgentverseProvider.`);
     }
+    return this.local.execute(agentType, input, onDelta, traceId);
+  }
 
-    const response = await agent.execute(input, onDelta, traceId);
-    response.provider = 'Fetch AI Agentverse';
-
-    return {
-      agentType,
-      response
-    };
+  private async post<T>(path: string, body: unknown): Promise<T> {
+    const res = await this.fetchImpl(`${this.options.baseUrl.replace(/\/+$/, '')}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.options.timeoutMs),
+    });
+    if (!res.ok) {
+      throw new Error(`Fetch agent ${path} returned ${res.status}`);
+    }
+    return (await res.json()) as T;
   }
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { AgentRouter } from '../agents/agent-router.js';
 import { MockClaudeProvider } from '../providers/mock-provider.js';
 import { InMemoryService } from '../memory/in-memory.js';
-import { MockBrowserbaseService } from '../integrations/browserbase.js';
+import { MockResearchService } from '../integrations/research.js';
 import { LocalAgentProvider, FetchAgentverseProvider } from '../agents/fetch-provider.js';
 import type { TutorInput } from '@screentutor/shared';
 
@@ -12,7 +12,7 @@ describe('AgentRouter Routing Rules', () => {
   beforeEach(() => {
     const ai = new MockClaudeProvider();
     const memory = new InMemoryService();
-    const bb = new MockBrowserbaseService();
+    const bb = new MockResearchService();
     router = new AgentRouter(ai, memory, bb);
   });
 

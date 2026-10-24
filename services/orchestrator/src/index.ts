@@ -5,11 +5,12 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { config } from './config.js';
 import type { AIProvider } from './providers/ai-provider.js';
-import type { BrowserbaseIntegration } from './integrations/browserbase.js';
-import type { SimularIntegration } from './integrations/simular.js';
+import type { ResearchIntegration } from './integrations/research.js';
+import type { CoDriveIntegration } from './integrations/codrive.js';
 import type { CartesiaIntegration } from './integrations/cartesia.js';
 import type { ObservabilityService } from './observability/observability-service.js';
 import type { TutorOrchestrator } from './orchestrator/tutor-orchestrator.js';
+import type { SimilarityIndex } from './cache/semantic-cache.js';
 import * as Sentry from '@sentry/node';
 import { initOrchestratorSentry } from './observability/sentry.js';
 
@@ -32,8 +33,8 @@ declare module 'fastify' {
   interface FastifyInstance {
     getOrchestrator(): Promise<TutorOrchestrator>;
     getMemory(): Promise<any>;
-    getBrowserbase(): Promise<BrowserbaseIntegration>;
-    getSimular(): Promise<SimularIntegration>;
+    getResearch(): Promise<ResearchIntegration>;
+    getCoDrive(): Promise<CoDriveIntegration>;
     getCartesia(): Promise<CartesiaIntegration>;
     getObservability(): Promise<ObservabilityService>;
   }
@@ -54,35 +55,48 @@ async function getAIProvider(): Promise<AIProvider> {
 let memoryInstance: any = null;
 async function getMemory(): Promise<any> {
   if (!memoryInstance) {
-    const { RedisMemoryService } = await import('./memory/redis-memory.js');
-    memoryInstance = await RedisMemoryService.create(config.REDIS_URL);
+    if (config.CONVEX_URL && config.SCREENTUTOR_CONVEX_SECRET) {
+      const { ConvexMemoryService } = await import('./memory/convex-memory.js');
+      memoryInstance = await ConvexMemoryService.create(config.CONVEX_URL, config.SCREENTUTOR_CONVEX_SECRET);
+    } else {
+      const { InMemoryService } = await import('./memory/in-memory.js');
+      console.warn('CONVEX_URL / SCREENTUTOR_CONVEX_SECRET not set — learner memory is in-process only.');
+      memoryInstance = new InMemoryService();
+    }
   }
   return memoryInstance;
 }
 
-let browserbaseInstance: BrowserbaseIntegration | null = null;
-async function getBrowserbase(): Promise<BrowserbaseIntegration> {
-  if (!browserbaseInstance) {
-    const { BrowserbaseService, MockBrowserbaseService } = await import('./integrations/browserbase.js');
-    if (config.BROWSERBASE_ENABLED && config.BROWSERBASE_API_KEY) {
+let researchInstance: ResearchIntegration | null = null;
+async function getResearch(): Promise<ResearchIntegration> {
+  if (!researchInstance) {
+    if (config.APIFY_ENABLED && config.APIFY_API_TOKEN) {
+      const { ApifyResearchService } = await import('./integrations/apify.js');
       const mem = await getMemory();
-      browserbaseInstance = new BrowserbaseService(config.BROWSERBASE_API_KEY, config.BROWSERBASE_PROJECT_ID, mem);
+      researchInstance = new ApifyResearchService(
+        { token: config.APIFY_API_TOKEN, maxResults: config.APIFY_MAX_RESULTS, timeoutMs: config.APIFY_TIMEOUT_MS },
+        mem
+      );
     } else {
-      browserbaseInstance = new MockBrowserbaseService();
+      const { MockResearchService } = await import('./integrations/research.js');
+      researchInstance = new MockResearchService();
     }
   }
-  return browserbaseInstance;
+  return researchInstance;
 }
 
-let simularInstance: SimularIntegration | null = null;
-async function getSimular(): Promise<SimularIntegration> {
-  if (!simularInstance) {
-    const { RealSimularService, MockSimularService } = await import('./integrations/simular.js');
-    simularInstance = (config.SIMULAR_ENABLED && config.SIMULAR_API_KEY)
-      ? new RealSimularService(config.SIMULAR_API_KEY, config.ENABLE_SAFE_ACTIONS)
-      : new MockSimularService();
+let codriveInstance: CoDriveIntegration | null = null;
+async function getCoDrive(): Promise<CoDriveIntegration> {
+  if (!codriveInstance) {
+    if (config.CODRIVE_ENABLED && config.ANTHROPIC_API_KEY) {
+      const { ClaudeCoDriveService } = await import('./integrations/claude-codrive.js');
+      codriveInstance = new ClaudeCoDriveService(config.ANTHROPIC_API_KEY, config.ENABLE_SAFE_ACTIONS);
+    } else {
+      const { MockCoDriveService } = await import('./integrations/codrive.js');
+      codriveInstance = new MockCoDriveService();
+    }
   }
-  return simularInstance;
+  return codriveInstance;
 }
 
 let cartesiaInstance: CartesiaIntegration | null = null;
@@ -106,12 +120,26 @@ async function getCartesia(): Promise<CartesiaIntegration> {
 let observabilityInstance: ObservabilityService | null = null;
 async function getObservability(): Promise<ObservabilityService> {
   if (!observabilityInstance) {
-    const { ArizePhoenixObservabilityService, NoopObservabilityService } = await import('./observability/observability-service.js');
-    observabilityInstance = (config.ARIZE_ENABLED && config.PHOENIX_COLLECTOR_ENDPOINT)
-      ? new ArizePhoenixObservabilityService(config.ARIZE_API_KEY, config.PHOENIX_COLLECTOR_ENDPOINT)
+    const { OtlpObservabilityService, NoopObservabilityService } = await import('./observability/observability-service.js');
+    observabilityInstance = (config.ELASTIC_ENABLED && config.ELASTIC_OTLP_ENDPOINT)
+      ? new OtlpObservabilityService({
+          endpoint: config.ELASTIC_OTLP_ENDPOINT,
+          headers: config.ELASTIC_API_KEY ? { Authorization: `ApiKey ${config.ELASTIC_API_KEY}` } : undefined,
+          environment: config.NODE_ENV,
+        })
       : new NoopObservabilityService();
   }
   return observabilityInstance;
+}
+
+async function getSimilarityIndex(): Promise<SimilarityIndex | null> {
+  if (!config.SEMANTIC_CACHE_ENABLED || !config.MOSS_PROJECT_ID || !config.MOSS_PROJECT_KEY) return null;
+  const { MossSimilarityIndex } = await import('./cache/moss-index.js');
+  return MossSimilarityIndex.fromCredentials(config.MOSS_PROJECT_ID, config.MOSS_PROJECT_KEY, {
+    indexName: config.MOSS_INDEX_NAME,
+    minScore: config.MOSS_MIN_SCORE,
+    refreshSeconds: 30,
+  });
 }
 
 let orchestratorInstance: TutorOrchestrator | null = null;
@@ -119,23 +147,23 @@ async function getOrchestrator(): Promise<TutorOrchestrator> {
   if (!orchestratorInstance) {
     const aiProv = await getAIProvider();
     const mem = await getMemory();
-    const bb = await getBrowserbase();
-    const sim = await getSimular();
+    const bb = await getResearch();
+    const sim = await getCoDrive();
     const obs = await getObservability();
 
     const { AgentRouter } = await import('./agents/agent-router.js');
     const { TutorOrchestrator } = await import('./orchestrator/tutor-orchestrator.js');
 
     const agentRouter = new AgentRouter(aiProv, mem, bb, obs);
-    orchestratorInstance = new TutorOrchestrator(aiProv, mem, agentRouter, bb, sim, obs);
+    orchestratorInstance = new TutorOrchestrator(aiProv, mem, agentRouter, bb, sim, obs, await getSimilarityIndex());
   }
   return orchestratorInstance;
 }
 
 fastify.decorate('getOrchestrator', getOrchestrator);
 fastify.decorate('getMemory', getMemory);
-fastify.decorate('getBrowserbase', getBrowserbase);
-fastify.decorate('getSimular', getSimular);
+fastify.decorate('getResearch', getResearch);
+fastify.decorate('getCoDrive', getCoDrive);
 fastify.decorate('getCartesia', getCartesia);
 fastify.decorate('getObservability', getObservability);
 
@@ -170,8 +198,8 @@ const start = async () => {
     await fastify.listen({ port: config.ORCHESTRATOR_PORT, host: '0.0.0.0' });
     console.log(`Server listening at http://localhost:${config.ORCHESTRATOR_PORT}`);
     console.log(`AI Provider: ${config.ANTHROPIC_API_KEY ? 'claude' : 'none'}`);
-    console.log(`Browserbase Configured: ${!!config.BROWSERBASE_API_KEY}`);
-    console.log(`Simular Configured: ${!!config.SIMULAR_API_KEY} (Safe Actions: ${config.ENABLE_SAFE_ACTIONS})`);
+    console.log(`Apify Research Configured: ${!!config.APIFY_API_TOKEN} (Enabled: ${config.APIFY_ENABLED})`);
+    console.log(`Co-drive (Claude computer use): ${config.CODRIVE_ENABLED && !!config.ANTHROPIC_API_KEY} (Desktop control: ${config.ENABLE_SAFE_ACTIONS})`);
     console.log(`Cartesia Configured: ${!!config.CARTESIA_API_KEY && !!config.CARTESIA_VOICE_ID} (Enabled: ${config.CARTESIA_ENABLED})`);
   } catch (err) {
     Sentry.captureException(err);

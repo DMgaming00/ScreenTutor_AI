@@ -83,6 +83,9 @@ const electronAPI = {
     ipcRenderer.on('trigger-overlay-error', () => callback());
   },
   getActiveWindowTitle: (): Promise<string | null> => ipcRenderer.invoke('get-active-window-title'),
+  /** Perform a Co-drive action the user approved (Windows only for now). */
+  executeApprovedAction: (action: unknown): Promise<{ success: boolean; message: string }> =>
+    ipcRenderer.invoke('execute-approved-action', action),
   setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => ipcRenderer.send('set-ignore-mouse-events', ignore, options),
   onCursorMove: (callback: (point: { x: number; y: number }) => void) => {
     ipcRenderer.on('cursor-move', (_event, point) => callback(point));

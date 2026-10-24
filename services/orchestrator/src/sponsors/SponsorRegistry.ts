@@ -1,201 +1,131 @@
-import { SponsorIntegration, SponsorStatus } from '@screentutor/shared';
+import { SponsorIntegration, SponsorStatus, type SponsorName } from '@screentutor/shared';
 import { config } from '../config.js';
+import type { MemoryService } from '../memory/memory-service.js';
+import { ConvexMemoryService } from '../memory/convex-memory.js';
+
+type EntryInfo = Pick<SponsorIntegration, 'productUse' | 'dataSent' | 'privacyNotes'>;
+
+/** Builds one registry row; `required` maps env var names to their current values. */
+function entry(
+  name: SponsorName,
+  status: SponsorStatus,
+  enabled: boolean,
+  required: Record<string, string>,
+  info: EntryInfo
+): SponsorIntegration {
+  const missing = Object.entries(required)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+  return {
+    name,
+    status,
+    configured: missing.length === 0,
+    enabled,
+    requiredEnvVars: Object.keys(required),
+    missingEnvVars: missing,
+    ...info,
+    lastHealthCheckAt: new Date().toISOString(),
+  };
+}
+
+/** real when enabled and configured; `whenMissing` when enabled but not configured. */
+function statusFor(enabled: boolean, configured: boolean, whenMissing: SponsorStatus = 'mock'): SponsorStatus {
+  if (!enabled) return 'disabled';
+  return configured ? 'real' : whenMissing;
+}
 
 export class SponsorRegistry {
-  constructor(private memoryService: any) {}
+  constructor(private memoryService: MemoryService | null) {}
 
   async getStatus(): Promise<SponsorIntegration[]> {
-    const sponsors: SponsorIntegration[] = [];
-
-    // 1. Claude
     const claudeConfigured = !!config.ANTHROPIC_API_KEY;
-    const claudeEnabled = config.AI_PROVIDER === 'claude' || config.AI_PROVIDER === 'mock';
-    let claudeStatus: SponsorStatus = 'disabled';
-    if (config.AI_PROVIDER === 'claude') {
-      claudeStatus = claudeConfigured ? 'real' : 'error';
-    } else if (config.AI_PROVIDER === 'mock') {
-      claudeStatus = 'mock';
-    }
-    sponsors.push({
-      name: 'claude',
-      status: claudeStatus,
-      configured: claudeConfigured,
-      enabled: claudeEnabled,
-      requiredEnvVars: ['ANTHROPIC_API_KEY'],
-      missingEnvVars: claudeConfigured ? [] : ['ANTHROPIC_API_KEY'],
-      productUse: 'Visual screen understanding and chat reasoning responses.',
-      dataSent: 'Screenshots (base64) and raw chat prompts.',
-      privacyNotes: 'Transmitted securely to Anthropic APIs under API usage guidelines.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 1b. Gemini
-    const geminiConfigured = !!config.GEMINI_API_KEY;
-    const geminiEnabled = config.AI_PROVIDER === 'gemini';
-    let geminiStatus: SponsorStatus = 'disabled';
-    if (config.AI_PROVIDER === 'gemini') {
-      geminiStatus = geminiConfigured ? 'real' : 'error';
-    }
-    sponsors.push({
-      name: 'gemini',
-      status: geminiStatus,
-      configured: geminiConfigured,
-      enabled: geminiEnabled,
-      requiredEnvVars: ['GEMINI_API_KEY'],
-      missingEnvVars: geminiConfigured ? [] : ['GEMINI_API_KEY'],
-      productUse: 'Visual screen understanding and chat reasoning responses.',
-      dataSent: 'Screenshots (base64) and raw chat prompts.',
-      privacyNotes: 'Transmitted securely to Google Gemini APIs under API usage guidelines.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 2. Redis
-    let redisStatus: SponsorStatus = 'mock';
-    const isRealRedis = this.memoryService && this.memoryService.constructor.name === 'RedisMemoryService';
-    const redisConfigured = !!config.REDIS_URL;
-    if (isRealRedis) {
-      redisStatus = 'real';
-    } else if (config.MEMORY_ENABLED) {
-      redisStatus = 'mock';
-    } else {
-      redisStatus = 'disabled';
-    }
-    sponsors.push({
-      name: 'redis',
-      status: redisStatus,
-      configured: redisConfigured,
-      enabled: config.MEMORY_ENABLED,
-      requiredEnvVars: ['REDIS_URL'],
-      missingEnvVars: redisConfigured ? [] : ['REDIS_URL'],
-      productUse: 'Persistent user profile storage and concept mapping.',
-      dataSent: 'Session profiles, recent questions, and concept confidence levels.',
-      privacyNotes: 'Stored locally in your Redis container database.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 3. Browserbase
-    const bbConfigured = !!config.BROWSERBASE_API_KEY && !!config.BROWSERBASE_PROJECT_ID;
-    let bbStatus: SponsorStatus = 'disabled';
-    if (config.BROWSERBASE_ENABLED) {
-      bbStatus = bbConfigured ? 'real' : 'mock';
-    }
-    sponsors.push({
-      name: 'browserbase',
-      status: bbStatus,
-      configured: bbConfigured,
-      enabled: config.BROWSERBASE_ENABLED,
-      requiredEnvVars: ['BROWSERBASE_API_KEY', 'BROWSERBASE_PROJECT_ID'],
-      missingEnvVars: [
-        ...(config.BROWSERBASE_API_KEY ? [] : ['BROWSERBASE_API_KEY']),
-        ...(config.BROWSERBASE_PROJECT_ID ? [] : ['BROWSERBASE_PROJECT_ID'])
-      ],
-      productUse: 'Headless browser queries for visual web research and scraping.',
-      dataSent: 'Search queries and URL text contents.',
-      privacyNotes: 'Transmitted to Browserbase servers for hosting browser sessions.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 4. Simular
-    const simularConfigured = !!config.SIMULAR_API_KEY;
-    let simularStatus: SponsorStatus = 'disabled';
-    if (config.SIMULAR_ENABLED) {
-      simularStatus = simularConfigured ? 'real' : 'mock';
-    }
-    sponsors.push({
-      name: 'simular',
-      status: simularStatus,
-      configured: simularConfigured,
-      enabled: config.SIMULAR_ENABLED,
-      requiredEnvVars: ['SIMULAR_API_KEY'],
-      missingEnvVars: simularConfigured ? [] : ['SIMULAR_API_KEY'],
-      productUse: 'Proposing safe desktop interaction actions (clicking/typing).',
-      dataSent: 'Goal text and coordinate positioning vectors.',
-      privacyNotes: 'Simulated locally when mock, or executed via Simular API.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 5. Fetch AI / Agentverse
-    const fetchConfigured = !!config.FETCH_AGENTVERSE_API_KEY && !!config.FETCH_AGENTVERSE_AGENT_ADDRESS;
-    let fetchStatus: SponsorStatus = 'disabled';
-    if (config.FETCH_AGENTVERSE_ENABLED) {
-      fetchStatus = fetchConfigured ? 'real' : 'mock';
-    }
-    sponsors.push({
-      name: 'fetch_agentverse',
-      status: fetchStatus,
-      configured: fetchConfigured,
-      enabled: config.FETCH_AGENTVERSE_ENABLED,
-      requiredEnvVars: ['FETCH_AGENTVERSE_API_KEY', 'FETCH_AGENTVERSE_AGENT_ADDRESS'],
-      missingEnvVars: [
-        ...(config.FETCH_AGENTVERSE_API_KEY ? [] : ['FETCH_AGENTVERSE_API_KEY']),
-        ...(config.FETCH_AGENTVERSE_AGENT_ADDRESS ? [] : ['FETCH_AGENTVERSE_AGENT_ADDRESS'])
-      ],
-      productUse: 'Specialist agent discovery and routing pipelines.',
-      dataSent: 'Agent registrations and task prompts.',
-      privacyNotes: 'Communicates with the Fetch AI Agentverse network.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 6. Arize
-    const arizeConfigured = !!config.ARIZE_API_KEY;
-    let arizeStatus: SponsorStatus = 'disabled';
-    if (config.ARIZE_ENABLED) {
-      arizeStatus = arizeConfigured ? 'real' : 'mock';
-    }
-    sponsors.push({
-      name: 'arize',
-      status: arizeStatus,
-      configured: arizeConfigured,
-      enabled: config.ARIZE_ENABLED,
-      requiredEnvVars: ['ARIZE_API_KEY'],
-      missingEnvVars: arizeConfigured ? [] : ['ARIZE_API_KEY'],
-      productUse: 'Observability, tracing prompts, output structures, and latency.',
-      dataSent: 'Prompts, model specifications, token count, and latency numbers.',
-      privacyNotes: 'Telemetry traces sent securely to Arize Phoenix endpoints.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 7. Sentry
-    const sentryConfigured = !!config.SENTRY_DSN;
-    let sentryStatus: SponsorStatus = 'disabled';
-    if (config.SENTRY_ENABLED) {
-      sentryStatus = sentryConfigured ? 'real' : 'mock';
-    }
-    sponsors.push({
-      name: 'sentry',
-      status: sentryStatus,
-      configured: sentryConfigured,
-      enabled: config.SENTRY_ENABLED,
-      requiredEnvVars: ['SENTRY_DSN'],
-      missingEnvVars: sentryConfigured ? [] : ['SENTRY_DSN'],
-      productUse: 'Capturing runtime errors and performance traces.',
-      dataSent: 'Error logs, stack traces, and system specifications.',
-      privacyNotes: 'Error logs posted directly to Sentry Ingest endpoint.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
-
-    // 8. Cartesia
+    const convexConfigured = !!config.CONVEX_URL && !!config.SCREENTUTOR_CONVEX_SECRET;
+    const convexConnected = this.memoryService instanceof ConvexMemoryService;
+    const mossConfigured = !!config.MOSS_PROJECT_ID && !!config.MOSS_PROJECT_KEY;
     const cartesiaConfigured = !!config.CARTESIA_API_KEY && !!config.CARTESIA_VOICE_ID;
-    let cartesiaStatus: SponsorStatus = 'disabled';
-    if (config.CARTESIA_ENABLED) {
-      cartesiaStatus = cartesiaConfigured ? 'real' : 'error';
-    }
-    sponsors.push({
-      name: 'cartesia',
-      status: cartesiaStatus,
-      configured: cartesiaConfigured,
-      enabled: config.CARTESIA_ENABLED,
-      requiredEnvVars: ['CARTESIA_API_KEY', 'CARTESIA_VOICE_ID'],
-      missingEnvVars: [
-        ...(config.CARTESIA_API_KEY ? [] : ['CARTESIA_API_KEY']),
-        ...(config.CARTESIA_VOICE_ID ? [] : ['CARTESIA_VOICE_ID'])
-      ],
-      productUse: 'Streaming Sonic text-to-speech and Ink speech-to-text over WebSocket.',
-      dataSent: 'spokenText for synthesis; push-to-talk microphone audio for transcription.',
-      privacyNotes: 'The renderer connects with short-lived access tokens; the API key stays on the orchestrator. Mic audio is only streamed while push-to-talk is held.',
-      lastHealthCheckAt: new Date().toISOString()
-    });
 
-    return sponsors;
+    return [
+      entry('claude', claudeConfigured ? 'real' : 'error', true, { ANTHROPIC_API_KEY: config.ANTHROPIC_API_KEY }, {
+        productUse: `Visual screen understanding and tutoring answers (${config.CLAUDE_MODEL}, structured outputs, prompt caching).`,
+        dataSent: 'Screenshots (base64) and the question, with redacted learner context.',
+        privacyNotes: 'Sent only on an explicit capture; screenshots are never stored.',
+      }),
+      entry(
+        'codrive',
+        statusFor(config.CODRIVE_ENABLED, claudeConfigured, 'error'),
+        config.CODRIVE_ENABLED,
+        { ANTHROPIC_API_KEY: config.ANTHROPIC_API_KEY },
+        {
+          productUse: 'Claude computer use proposes the next click / type / key step in Co-drive mode.',
+          dataSent: 'The Co-drive goal and the captured screenshot.',
+          privacyNotes: `Every step needs your approval; desktop control is ${config.ENABLE_SAFE_ACTIONS ? 'on' : 'off (ENABLE_SAFE_ACTIONS=false)'}. Blocked in privacy mode and on denylisted windows.`,
+        }
+      ),
+      entry(
+        'convex',
+        !config.MEMORY_ENABLED ? 'disabled' : convexConnected ? 'real' : convexConfigured ? 'error' : 'mock',
+        config.MEMORY_ENABLED,
+        { CONVEX_URL: config.CONVEX_URL, SCREENTUTOR_CONVEX_SECRET: config.SCREENTUTOR_CONVEX_SECRET },
+        {
+          productUse: 'Learner profiles, weak concepts, session history and the response cache.',
+          dataSent: 'Redacted question summaries, concept confidence, and screenshot hashes (never images).',
+          privacyNotes: 'Functions require a shared secret; falls back to in-process memory when unset.',
+        }
+      ),
+      entry(
+        'moss',
+        statusFor(config.SEMANTIC_CACHE_ENABLED, mossConfigured),
+        config.SEMANTIC_CACHE_ENABLED,
+        { MOSS_PROJECT_ID: config.MOSS_PROJECT_ID, MOSS_PROJECT_KEY: config.MOSS_PROJECT_KEY },
+        {
+          productUse: 'Semantic cache: reuses an answer when a reworded question is asked about the same screen.',
+          dataSent: 'Lower-cased question text plus scope tags (mode, screenshot hash).',
+          privacyNotes: 'Matches only within the same screenshot hash; answers themselves stay in Convex.',
+        }
+      ),
+      entry('apify', statusFor(config.APIFY_ENABLED, !!config.APIFY_API_TOKEN), config.APIFY_ENABLED, { APIFY_API_TOKEN: config.APIFY_API_TOKEN }, {
+        productUse: 'Research mode: RAG Web Browser searches and scrapes pages for the concept.',
+        dataSent: 'Concept name and learner level as a search query.',
+        privacyNotes: 'Blocked in privacy mode and on denylisted windows; no screenshot is sent.',
+      }),
+      entry(
+        'fetch_agentverse',
+        config.FETCH_AGENTVERSE_ENABLED ? 'real' : 'mock',
+        config.FETCH_AGENTVERSE_ENABLED,
+        { FETCH_AGENT_URL: config.FETCH_AGENT_URL },
+        {
+          productUse: 'Study-planner uAgent on Agentverse: routes questions and builds spaced-repetition plans.',
+          dataSent: 'Question text, mode, and weak-concept statistics.',
+          privacyNotes: 'Runs locally (services/fetch-agent); local routing is used if it is stopped.',
+        }
+      ),
+      entry(
+        'elastic',
+        statusFor(config.ELASTIC_ENABLED, !!config.ELASTIC_OTLP_ENDPOINT),
+        config.ELASTIC_ENABLED,
+        { ELASTIC_OTLP_ENDPOINT: config.ELASTIC_OTLP_ENDPOINT, ELASTIC_API_KEY: config.ELASTIC_API_KEY },
+        {
+          productUse: 'OpenTelemetry traces of each tutoring step, latencies and evaluation scores.',
+          dataSent: 'Redacted span attributes: mode, agent, latency, evaluation results.',
+          privacyNotes: 'Metadata is scrubbed by RedactionService before export; no screenshots.',
+        }
+      ),
+      entry('sentry', statusFor(config.SENTRY_ENABLED, !!config.SENTRY_DSN), config.SENTRY_ENABLED, { SENTRY_DSN: config.SENTRY_DSN }, {
+        productUse: 'Capturing runtime errors and performance traces.',
+        dataSent: 'Error logs, stack traces, and system specifications.',
+        privacyNotes: 'Events are redacted in beforeSend before posting to Sentry.',
+      }),
+      entry(
+        'cartesia',
+        statusFor(config.CARTESIA_ENABLED, cartesiaConfigured, 'error'),
+        config.CARTESIA_ENABLED,
+        { CARTESIA_API_KEY: config.CARTESIA_API_KEY, CARTESIA_VOICE_ID: config.CARTESIA_VOICE_ID },
+        {
+          productUse: 'Streaming Sonic text-to-speech and Ink speech-to-text over WebSocket.',
+          dataSent: 'spokenText for synthesis; push-to-talk microphone audio for transcription.',
+          privacyNotes: 'The renderer connects with short-lived access tokens; the API key stays on the orchestrator. Mic audio is only streamed while push-to-talk is held.',
+        }
+      ),
+    ];
   }
 }

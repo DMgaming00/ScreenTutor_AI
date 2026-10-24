@@ -11,5 +11,5 @@ export interface MemoryService {
   clearUserMemory(userId: string): Promise<void>;
   semanticCacheGet(cacheKey: string): Promise<string | null>;
   semanticCacheSet(cacheKey: string, value: string, ttlSeconds?: number): Promise<void>;
-  healthCheck(): Promise<{ status: string; type: 'redis' | 'in-memory'; details?: any }>;
+  healthCheck(): Promise<{ status: string; type: 'convex' | 'in-memory'; details?: any }>;
 }

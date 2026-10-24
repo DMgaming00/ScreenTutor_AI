@@ -7,6 +7,7 @@ import { TutorMode, parsePointTag, DEMO_LESSONS, type DemoLesson, RedactionServi
 import { getScreenMetadata } from '../hooks/useScreenCapture';
 import * as Sentry from '@sentry/react';
 import { getSimplerExplanation, generatePracticeProblem } from '../api/client';
+import { decideCoDriveAction } from '../api/codrive';
 import type { ChatTurn } from '../hooks/useChatHistory';
 import type { StoredExplanation } from '../types/explanation';
 import './ChatPanel.css';
@@ -246,16 +247,8 @@ export default function ChatPanel({
 
   const handleApproveAction = async (actionId: string, approved: boolean) => {
     try {
-      const res = await fetch(`http://localhost:4317/api/actions/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actionId, approved })
-      });
-      const data = await res.json();
-      setApprovedActions(prev => ({
-        ...prev,
-        [actionId]: { success: data.success, message: data.message || (approved ? 'Approved' : 'Rejected') }
-      }));
+      const result = await decideCoDriveAction(actionId, approved);
+      setApprovedActions(prev => ({ ...prev, [actionId]: result }));
     } catch (err) {
       console.error('Failed to submit action approval:', err);
     }

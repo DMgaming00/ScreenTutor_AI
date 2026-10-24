@@ -4,8 +4,8 @@ import { ActionApprovalRequest, RedactionService } from '@screentutor/shared';
 export const actionRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/api/actions/propose', async (request, reply) => {
     const body = request.body as any;
-    const simular = await fastify.getSimular();
-    const actions = await simular.proposeActions(body.goal, body.screenContext);
+    const codrive = await fastify.getCoDrive();
+    const actions = await codrive.proposeActions(body.goal, body.screenContext);
     return actions;
   });
 
@@ -15,8 +15,8 @@ export const actionRoutes: FastifyPluginAsync = async (fastify) => {
       if (!req.approved) {
         return { actionId: req.actionId, success: false, message: 'Action rejected by user' };
       }
-      const simular = await fastify.getSimular();
-      const result = await simular.executeApprovedAction(req.actionId);
+      const codrive = await fastify.getCoDrive();
+      const result = await codrive.executeApprovedAction(req.actionId);
       return result;
     } catch (err: any) {
       const safeError = RedactionService.redactError(err);

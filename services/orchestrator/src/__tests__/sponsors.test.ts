@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { SponsorRegistry } from '../sponsors/SponsorRegistry.js';
 import { InMemoryService } from '../memory/in-memory.js';
-import { RedisMemoryService } from '../memory/redis-memory.js';
+import { ConvexMemoryService } from '../memory/convex-memory.js';
 import { config } from '../config.js';
 
+const fakeConvex = { query: async () => 'ok', mutation: async () => null };
+
 describe('SponsorRegistry Configurations', () => {
-  // Store initial configuration state to restore after tests
-  let originalConfig: any;
+  let originalConfig: typeof config;
 
   beforeEach(() => {
     originalConfig = { ...config };
@@ -16,210 +17,81 @@ describe('SponsorRegistry Configurations', () => {
     Object.assign(config, originalConfig);
   });
 
-  it('detects Claude mock vs real configurations correctly', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
+  const find = async (name: string, memory: any = new InMemoryService()) =>
+    (await new SponsorRegistry(memory).getStatus()).find((s) => s.name === name)!;
 
-    // 1. Mock status
-    config.AI_PROVIDER = 'mock';
+  it('reports Claude as error without a key and real with one', async () => {
     config.ANTHROPIC_API_KEY = '';
-    let status = await registry.getStatus();
-    let claude = status.find(s => s.name === 'claude');
-    expect(claude).toBeDefined();
-    expect(claude!.status).toBe('mock');
-    expect(claude!.configured).toBe(false);
+    let claude = await find('claude');
+    expect(claude.status).toBe('error');
+    expect(claude.missingEnvVars).toEqual(['ANTHROPIC_API_KEY']);
 
-    // 2. Real status with key
-    config.AI_PROVIDER = 'claude';
-    config.ANTHROPIC_API_KEY = 'sk-ant-12345';
-    status = await registry.getStatus();
-    claude = status.find(s => s.name === 'claude');
-    expect(claude!.status).toBe('real');
-    expect(claude!.configured).toBe(true);
-
-    // 3. Error status when configured as real but key is missing
-    config.AI_PROVIDER = 'claude';
-    config.ANTHROPIC_API_KEY = '';
-    status = await registry.getStatus();
-    claude = status.find(s => s.name === 'claude');
-    expect(claude!.status).toBe('error');
+    config.ANTHROPIC_API_KEY = 'sk-ant-test';
+    claude = await find('claude');
+    expect(claude.status).toBe('real');
+    expect(claude.configured).toBe(true);
   });
 
-  it('detects Gemini disabled vs real vs error configurations correctly', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
-
-    // 1. Disabled status
-    config.AI_PROVIDER = 'mock';
-    config.GEMINI_API_KEY = '';
-    let status = await registry.getStatus();
-    let gemini = status.find(s => s.name === 'gemini');
-    expect(gemini).toBeDefined();
-    expect(gemini!.status).toBe('disabled');
-    expect(gemini!.configured).toBe(false);
-
-    // 2. Real status with key
-    config.AI_PROVIDER = 'gemini';
-    config.GEMINI_API_KEY = 'AIzaSy12345';
-    status = await registry.getStatus();
-    gemini = status.find(s => s.name === 'gemini');
-    expect(gemini!.status).toBe('real');
-    expect(gemini!.configured).toBe(true);
-
-    // 3. Error status when configured as real but key is missing
-    config.AI_PROVIDER = 'gemini';
-    config.GEMINI_API_KEY = '';
-    status = await registry.getStatus();
-    gemini = status.find(s => s.name === 'gemini');
-    expect(gemini!.status).toBe('error');
-  });
-
-  it('detects Redis connected/real vs fallback/mock status', async () => {
-    // 1. Falling back to InMemory
-    const inMemory = new InMemoryService();
-    let registry = new SponsorRegistry(inMemory);
+  it('reports Convex as real only when the Convex service is connected', async () => {
     config.MEMORY_ENABLED = true;
-    config.REDIS_URL = 'redis://localhost:6379';
-    let status = await registry.getStatus();
-    let redis = status.find(s => s.name === 'redis');
-    expect(redis!.status).toBe('mock'); // InMemory is used in place of Redis
-    expect(redis!.configured).toBe(true); // url exists
+    config.CONVEX_URL = '';
+    config.SCREENTUTOR_CONVEX_SECRET = '';
+    expect((await find('convex')).status).toBe('mock');
 
-    // 2. Real connection active (simulated via RedisMemoryService mock class instantiation)
-    const mockRedisClient = {} as any; // simple mock client
-    const redisService = (RedisMemoryService as any).constructor.prototype;
-    // Instantiate a fake class instance that passes the constructor name check
-    const fakeRedisService = Object.create(RedisMemoryService.prototype);
-    fakeRedisService.redis = mockRedisClient;
-    fakeRedisService.redisUrl = 'redis://localhost:6379';
+    config.CONVEX_URL = 'https://happy-otter-123.convex.cloud';
+    config.SCREENTUTOR_CONVEX_SECRET = 'secret';
+    expect((await find('convex')).status).toBe('error'); // configured but fell back to memory
 
-    registry = new SponsorRegistry(fakeRedisService);
-    status = await registry.getStatus();
-    redis = status.find(s => s.name === 'redis');
-    expect(redis!.status).toBe('real');
+    const connected = new ConvexMemoryService(fakeConvex, 'secret');
+    expect((await find('convex', connected)).status).toBe('real');
+
+    config.MEMORY_ENABLED = false;
+    expect((await find('convex', connected)).status).toBe('disabled');
   });
 
-  it('detects Browserbase configured vs mock status', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
+  it('reports Moss, Apify and Elastic from their credentials', async () => {
+    config.SEMANTIC_CACHE_ENABLED = true;
+    config.MOSS_PROJECT_ID = '';
+    config.MOSS_PROJECT_KEY = '';
+    config.APIFY_ENABLED = true;
+    config.APIFY_API_TOKEN = '';
+    config.ELASTIC_ENABLED = true;
+    config.ELASTIC_OTLP_ENDPOINT = '';
+    expect((await find('moss')).status).toBe('mock');
+    expect((await find('apify')).status).toBe('mock');
+    expect((await find('elastic')).status).toBe('mock');
 
-    // 1. Enabled but unconfigured
-    config.BROWSERBASE_ENABLED = true;
-    config.BROWSERBASE_API_KEY = '';
-    config.BROWSERBASE_PROJECT_ID = '';
-    let status = await registry.getStatus();
-    let bb = status.find(s => s.name === 'browserbase');
-    expect(bb!.status).toBe('mock');
+    config.MOSS_PROJECT_ID = 'p';
+    config.MOSS_PROJECT_KEY = 'k';
+    config.APIFY_API_TOKEN = 'apify_api_x';
+    config.ELASTIC_OTLP_ENDPOINT = 'https://x.ingest.elastic.cloud:443';
+    expect((await find('moss')).status).toBe('real');
+    expect((await find('apify')).status).toBe('real');
+    expect((await find('elastic')).status).toBe('real');
 
-    // 2. Enabled and configured
-    config.BROWSERBASE_API_KEY = 'bb-key';
-    config.BROWSERBASE_PROJECT_ID = 'bb-proj';
-    status = await registry.getStatus();
-    bb = status.find(s => s.name === 'browserbase');
-    expect(bb!.status).toBe('real');
-
-    // 3. Disabled
-    config.BROWSERBASE_ENABLED = false;
-    status = await registry.getStatus();
-    bb = status.find(s => s.name === 'browserbase');
-    expect(bb!.status).toBe('disabled');
+    config.APIFY_ENABLED = false;
+    expect((await find('apify')).status).toBe('disabled');
   });
 
-  it('detects Simular configured vs mock status', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
-
-    // 1. Enabled but unconfigured
-    config.SIMULAR_ENABLED = true;
-    config.SIMULAR_API_KEY = '';
-    let status = await registry.getStatus();
-    let simular = status.find(s => s.name === 'simular');
-    expect(simular!.status).toBe('mock');
-
-    // 2. Configured
-    config.SIMULAR_API_KEY = 'simular-key';
-    status = await registry.getStatus();
-    simular = status.find(s => s.name === 'simular');
-    expect(simular!.status).toBe('real');
-
-    // 3. Disabled
-    config.SIMULAR_ENABLED = false;
-    status = await registry.getStatus();
-    simular = status.find(s => s.name === 'simular');
-    expect(simular!.status).toBe('disabled');
+  it('reports Co-drive from the Anthropic key and the enable switch', async () => {
+    config.CODRIVE_ENABLED = true;
+    config.ANTHROPIC_API_KEY = '';
+    expect((await find('codrive')).status).toBe('error');
+    config.ANTHROPIC_API_KEY = 'sk-ant-test';
+    expect((await find('codrive')).status).toBe('real');
+    config.CODRIVE_ENABLED = false;
+    expect((await find('codrive')).status).toBe('disabled');
   });
 
-  it('detects Fetch local vs remote status', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
-
-    // 1. Enabled but unconfigured (falls back to mock/local)
-    config.FETCH_AGENTVERSE_ENABLED = true;
-    config.FETCH_AGENTVERSE_API_KEY = '';
-    config.FETCH_AGENTVERSE_AGENT_ADDRESS = '';
-    let status = await registry.getStatus();
-    let fetch = status.find(s => s.name === 'fetch_agentverse');
-    expect(fetch!.status).toBe('mock');
-
-    // 2. Enabled and configured (real/remote)
-    config.FETCH_AGENTVERSE_API_KEY = 'fetch-key';
-    config.FETCH_AGENTVERSE_AGENT_ADDRESS = 'agent-addr';
-    status = await registry.getStatus();
-    fetch = status.find(s => s.name === 'fetch_agentverse');
-    expect(fetch!.status).toBe('real');
-
-    // 3. Disabled
+  it('reports Fetch.ai as real when the agent is enabled, local otherwise', async () => {
     config.FETCH_AGENTVERSE_ENABLED = false;
-    status = await registry.getStatus();
-    fetch = status.find(s => s.name === 'fetch_agentverse');
-    expect(fetch!.status).toBe('disabled');
+    expect((await find('fetch_agentverse')).status).toBe('mock');
+    config.FETCH_AGENTVERSE_ENABLED = true;
+    expect((await find('fetch_agentverse')).status).toBe('real');
   });
 
-  it('detects Arize and Sentry enabled vs disabled status', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
-
-    // Arize disabled
-    config.ARIZE_ENABLED = false;
-    config.ARIZE_API_KEY = 'key';
-    let status = await registry.getStatus();
-    let arize = status.find(s => s.name === 'arize');
-    expect(arize!.status).toBe('disabled');
-
-    // Arize enabled & configured
-    config.ARIZE_ENABLED = true;
-    status = await registry.getStatus();
-    arize = status.find(s => s.name === 'arize');
-    expect(arize!.status).toBe('real');
-
-    // Sentry disabled
-    config.SENTRY_ENABLED = false;
-    config.SENTRY_DSN = 'dsn';
-    status = await registry.getStatus();
-    let sentry = status.find(s => s.name === 'sentry');
-    expect(sentry!.status).toBe('disabled');
-
-    // Sentry enabled & configured
-    config.SENTRY_ENABLED = true;
-    status = await registry.getStatus();
-    sentry = status.find(s => s.name === 'sentry');
-    expect(sentry!.status).toBe('real');
-  });
-
-  it('guarantees that excluded sponsors are completely absent from registry statuses', async () => {
-    const memory = new InMemoryService();
-    const registry = new SponsorRegistry(memory);
-    const status = await registry.getStatus();
-
-    const allowedSponsors = ['claude', 'gemini', 'redis', 'browserbase', 'simular', 'fetch_agentverse', 'arize', 'sentry', 'cartesia'];
-    for (const item of status) {
-      expect(allowedSponsors).toContain(item.name);
-    }
-
-    const excludedSponsors = ['qnx', 'zoox', 'cognition', 'devin', 'annapurna', 'aws', 'poke', 'interaction_co'];
-    for (const excluded of excludedSponsors) {
-      const found = status.some(s => s.name.toLowerCase() === excluded);
-      expect(found).toBe(false);
-    }
+  it('lists exactly the current sponsor integrations', async () => {
+    const names = (await new SponsorRegistry(new InMemoryService()).getStatus()).map((s) => s.name);
+    expect(names).toEqual(['claude', 'codrive', 'convex', 'moss', 'apify', 'fetch_agentverse', 'elastic', 'sentry', 'cartesia']);
   });
 });

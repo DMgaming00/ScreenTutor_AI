@@ -126,7 +126,7 @@ export class InMemoryService implements MemoryService {
     });
   }
 
-  async healthCheck(): Promise<{ status: string; type: 'redis' | 'in-memory'; details?: any }> {
+  async healthCheck(): Promise<{ status: string; type: 'convex' | 'in-memory'; details?: any }> {
     return {
       status: 'healthy',
       type: 'in-memory'

@@ -17,28 +17,40 @@ export const config = {
   CLAUDE_EFFORT: (process.env.CLAUDE_EFFORT || 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
   CLAUDE_MAX_TOKENS: parseInt(process.env.CLAUDE_MAX_TOKENS || '16000', 10),
 
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  /** Convex deployment URL (printed by `npx convex dev`), e.g. https://happy-otter-123.convex.cloud */
+  CONVEX_URL: process.env.CONVEX_URL || '',
+  /** Shared secret; must match `npx convex env set SCREENTUTOR_CONVEX_SECRET ...` */
+  SCREENTUTOR_CONVEX_SECRET: process.env.SCREENTUTOR_CONVEX_SECRET || '',
   MEMORY_ENABLED: process.env.MEMORY_ENABLED !== 'false',
   RECENT_TURNS_CONTEXT_LIMIT: parseInt(process.env.RECENT_TURNS_CONTEXT_LIMIT || '5', 10),
   SEMANTIC_CACHE_ENABLED: process.env.SEMANTIC_CACHE_ENABLED !== 'false',
   TUTOR_CACHE_TTL_SECONDS: parseInt(process.env.TUTOR_CACHE_TTL_SECONDS || '1800', 10),
+  MOSS_PROJECT_ID: process.env.MOSS_PROJECT_ID || '',
+  MOSS_PROJECT_KEY: process.env.MOSS_PROJECT_KEY || '',
+  MOSS_INDEX_NAME: process.env.MOSS_INDEX_NAME || 'screentutor-tutor-cache',
+  /** Similarity needed to reuse an answer for a reworded question on the same screen */
+  MOSS_MIN_SCORE: parseFloat(process.env.MOSS_MIN_SCORE || '0.9'),
   RESEARCH_CACHE_TTL_SECONDS: parseInt(process.env.RESEARCH_CACHE_TTL_SECONDS || '3600', 10),
 
-  BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY || '',
-  BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID || '',
-  BROWSERBASE_ENABLED: process.env.BROWSERBASE_ENABLED === 'true',
+  APIFY_API_TOKEN: process.env.APIFY_API_TOKEN || '',
+  APIFY_ENABLED: process.env.APIFY_ENABLED !== 'false',
+  APIFY_MAX_RESULTS: parseInt(process.env.APIFY_MAX_RESULTS || '3', 10),
+  APIFY_TIMEOUT_MS: parseInt(process.env.APIFY_TIMEOUT_MS || '20000', 10),
 
-  SIMULAR_API_KEY: process.env.SIMULAR_API_KEY || '',
-  SIMULAR_ENABLED: process.env.SIMULAR_ENABLED === 'true',
+  /** Co-drive plans steps with Claude computer use (needs ANTHROPIC_API_KEY) */
+  CODRIVE_ENABLED: process.env.CODRIVE_ENABLED !== 'false',
   ENABLE_SAFE_ACTIONS: process.env.ENABLE_SAFE_ACTIONS === 'true',
 
-  FETCH_AGENTVERSE_API_KEY: process.env.FETCH_AGENTVERSE_API_KEY || '',
-  FETCH_AGENTVERSE_AGENT_ADDRESS: process.env.FETCH_AGENTVERSE_AGENT_ADDRESS || '',
+  /** REST base URL of the study-planner uAgent in services/fetch-agent */
+  FETCH_AGENT_URL: process.env.FETCH_AGENT_URL || 'http://localhost:8001',
+  /** Routing runs on every turn, so a slow or stopped agent must not hold it up */
+  FETCH_AGENT_TIMEOUT_MS: parseInt(process.env.FETCH_AGENT_TIMEOUT_MS || '800', 10),
   FETCH_AGENTVERSE_ENABLED: process.env.FETCH_AGENTVERSE_ENABLED === 'true',
 
-  ARIZE_API_KEY: process.env.ARIZE_API_KEY || '',
-  PHOENIX_COLLECTOR_ENDPOINT: process.env.PHOENIX_COLLECTOR_ENDPOINT || '',
-  ARIZE_ENABLED: process.env.ARIZE_ENABLED === 'true',
+  /** Elastic managed OTLP endpoint, e.g. https://<id>.ingest.<region>.elastic.cloud:443 (any OTLP/HTTP collector works) */
+  ELASTIC_OTLP_ENDPOINT: process.env.ELASTIC_OTLP_ENDPOINT || '',
+  ELASTIC_API_KEY: process.env.ELASTIC_API_KEY || '',
+  ELASTIC_ENABLED: process.env.ELASTIC_ENABLED !== 'false',
 
   SENTRY_DSN: process.env.SENTRY_DSN || '',
   SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT || 'development',

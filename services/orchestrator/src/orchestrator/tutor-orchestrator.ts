@@ -2,13 +2,15 @@ import { TutorInput, TutorResponse, SessionTurn, LearnerProfile, RedactionServic
 import type { AIProvider } from '../providers/ai-provider.js';
 import type { MemoryService } from '../memory/memory-service.js';
 import type { AgentRouter } from '../agents/agent-router.js';
-import type { BrowserbaseIntegration } from '../integrations/browserbase.js';
-import type { SimularIntegration } from '../integrations/simular.js';
+import type { ResearchIntegration } from '../integrations/research.js';
+import type { CoDriveIntegration } from '../integrations/codrive.js';
 import type { ObservabilityService } from '../observability/observability-service.js';
 import {
   SemanticCache,
   buildTutorResponseCacheKey,
+  buildTutorSimilarityHint,
   hashScreenshot,
+  type SimilarityIndex,
   sanitizeResponseForCache,
 } from '../cache/semantic-cache.js';
 import { config } from '../config.js';
@@ -24,11 +26,12 @@ export class TutorOrchestrator {
     private aiProvider: AIProvider,
     private memory: MemoryService,
     private agentRouter: AgentRouter,
-    private browserbase: BrowserbaseIntegration,
-    private simular: SimularIntegration,
-    private observability: ObservabilityService
+    private research: ResearchIntegration,
+    private codrive: CoDriveIntegration,
+    private observability: ObservabilityService,
+    similarityIndex: SimilarityIndex | null = null
   ) {
-    this.semanticCache = new SemanticCache(memory, config.SEMANTIC_CACHE_ENABLED);
+    this.semanticCache = new SemanticCache(memory, config.SEMANTIC_CACHE_ENABLED, similarityIndex);
   }
 
   async handleQuestion(input: TutorInput, onDelta?: (text: string) => void): Promise<TutorResponse> {
@@ -75,7 +78,7 @@ export class TutorOrchestrator {
 
         // 2–3. Accessibility tree, learner profile and session history are independent
         // reads — fetch them concurrently instead of one round trip after another.
-        this.observability.addSpan(traceId, 'SimularContextFetch');
+        this.observability.addSpan(traceId, 'AccessibilityContextFetch');
         this.observability.addSpan(traceId, 'MemoryFetch');
         const contextSpan = Sentry.startInactiveSpan({ name: 'context-fetch', op: 'memory' });
         const historyWanted = config.MEMORY_ENABLED;
@@ -129,15 +132,39 @@ export class TutorOrchestrator {
 
         if (canUseSemanticCache) {
           const cacheKey = buildTutorResponseCacheKey(input, screenshotHash, weakConceptNames);
-          const cached = await this.semanticCache.get<TutorResponse>(cacheKey);
+          const cached = await this.semanticCache.lookup<TutorResponse>(
+            cacheKey,
+            buildTutorSimilarityHint(input, screenshotHash, weakConceptNames)
+          );
           if (cached) {
-            response = { ...cached, mode: input.mode };
+            response = { ...cached.value, mode: input.mode };
             fromCache = true;
             this.observability.recordEvent(traceId, 'SemanticCacheHit', {
               cacheKeyPrefix: cacheKey.slice(0, 20),
+              match: cached.match,
             });
           }
         }
+
+        // Co-drive planning needs only the screenshot and the goal, so it runs
+        // alongside the tutor's answer instead of after it.
+        const codriveAllowed = input.mode === 'codrive' && privacyGuard.isCoDriveAllowed(input);
+        const proposalsPromise = codriveAllowed
+          ? this.codrive
+              .proposeActions(input.question, {
+                privacyMode: input.privacyMode,
+                windowTitle: input.appMetadata?.windowTitle,
+                screenshotBase64: input.screenshotBase64,
+                imageWidth: input.screenMetadata?.imageWidth ?? input.screenMetadata?.width,
+                imageHeight: input.screenMetadata?.imageHeight ?? input.screenMetadata?.height,
+                screenNumber: input.screenMetadata?.screenNumber,
+              })
+              .catch((err) => {
+                Sentry.captureException(err);
+                console.error('Co-drive proposal failed:', err);
+                return [];
+              })
+          : null;
 
         // 4. AgentRouting
         this.observability.addSpan(traceId, 'AgentRouting');
@@ -172,7 +199,8 @@ export class TutorOrchestrator {
             await this.semanticCache.set(
               cacheKey,
               sanitizeResponseForCache(response),
-              config.TUTOR_CACHE_TTL_SECONDS
+              config.TUTOR_CACHE_TTL_SECONDS,
+              buildTutorSimilarityHint(input, screenshotHash, weakConceptNames)
             );
             this.observability.recordEvent(traceId, 'SemanticCacheSet', {
               cacheKeyPrefix: cacheKey.slice(0, 20),
@@ -231,27 +259,27 @@ export class TutorOrchestrator {
           drawingCount: response.drawings?.length || 0
         });
 
-        // 8. BrowserbaseResearch — only if allowed by PrivacyGuard
-        this.observability.addSpan(traceId, 'BrowserbaseResearch');
-        if (input.mode === 'research' && response.researchResult && privacyGuard.isBrowserbaseAllowed(input)) {
+        // 8. WebResearch — only if allowed by PrivacyGuard
+        this.observability.addSpan(traceId, 'WebResearch');
+        if (input.mode === 'research' && response.researchResult && privacyGuard.isResearchAllowed(input)) {
           const concept = response.concept || response.memoryUpdates?.detectedConcept || 'algebra';
           const connectionSentence = `This web explanation is saying the same thing as the ${concept.replace(/_/g, ' ')} step here.`;
           response.spokenText = `${response.spokenText} ${connectionSentence}`;
           response.summary = `${response.summary} (Connected: ${connectionSentence})`;
-          this.observability.recordEvent(traceId, 'BrowserbaseResearchCompleted');
-        } else if (input.mode === 'research' && !privacyGuard.isBrowserbaseAllowed(input)) {
-          this.observability.recordEvent(traceId, 'BrowserbaseResearchSkipped', { reason: 'privacy' });
+          this.observability.recordEvent(traceId, 'WebResearchCompleted');
+        } else if (input.mode === 'research' && !privacyGuard.isResearchAllowed(input)) {
+          this.observability.recordEvent(traceId, 'WebResearchSkipped', { reason: 'privacy' });
         }
 
-        // 9. Simular Action Proposal — only if allowed by PrivacyGuard
-        if (input.mode === 'codrive' && privacyGuard.isSimularAllowed(input)) {
-          const actions = await this.simular.proposeActions(input.question, {
-            privacyMode: input.privacyMode,
-            windowTitle: input.appMetadata?.windowTitle
+        // 9. Co-drive action proposals — only if allowed by PrivacyGuard
+        if (proposalsPromise) {
+          this.observability.addSpan(traceId, 'CoDriveProposals');
+          response.proposedActions = await proposalsPromise;
+          this.observability.recordEvent(traceId, 'CoDriveActionsProposed', {
+            count: response.proposedActions.length,
           });
-          response.proposedActions = actions;
         } else if (input.mode === 'codrive') {
-          this.observability.recordEvent(traceId, 'SimularActionsSkipped', { reason: 'privacy' });
+          this.observability.recordEvent(traceId, 'CoDriveActionsSkipped', { reason: 'privacy' });
         }
 
         // 10. RedisMemoryUpdate — only if allowed
@@ -323,12 +351,12 @@ export class TutorOrchestrator {
   }
 
   private async fetchAccessibilityTree(input: TutorInput, traceId: string): Promise<void> {
-    if (!privacyGuard.isSimularAllowed(input)) {
+    if (!privacyGuard.isCoDriveAllowed(input)) {
       this.observability.recordEvent(traceId, 'AccessibilityTreeSkipped', { reason: 'privacy' });
       return;
     }
     try {
-      const tree = await this.simular.getAccessibilityTree();
+      const tree = await this.codrive.getAccessibilityTree();
       input.accessibilityTree = tree;
       this.observability.recordEvent(traceId, 'AccessibilityTreeFetched', {
         nodesCount: tree?.nodes?.length || 0

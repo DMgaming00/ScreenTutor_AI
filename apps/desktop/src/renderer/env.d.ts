@@ -54,6 +54,7 @@ declare global {
     simulateOverlayError: () => void;
     onTriggerOverlayError: (callback: () => void) => void;
     getActiveWindowTitle: () => Promise<string | null>;
+    executeApprovedAction: (action: unknown) => Promise<{ success: boolean; message: string }>;
     setIgnoreMouseEvents: (ignore: boolean, options?: { forward: boolean }) => void;
     onCursorMove: (callback: (point: { x: number; y: number }) => void) => void;
     onFlyToPoint: (callback: (point: { x: number; y: number }) => void) => void;

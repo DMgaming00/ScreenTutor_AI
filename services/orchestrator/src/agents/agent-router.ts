@@ -1,7 +1,7 @@
 import type { TutorInput, TutorResponse } from '@screentutor/shared';
 import type { AIProvider } from '../providers/ai-provider.js';
 import type { MemoryService } from '../memory/memory-service.js';
-import type { BrowserbaseIntegration } from '../integrations/browserbase.js';
+import type { ResearchIntegration } from '../integrations/research.js';
 import { getRoutingPromptOverride } from '../prompts/agent-prompts.js';
 import { MathTutorAgent } from './math-tutor.js';
 import { MisconceptionDetectorAgent } from './misconception-detector.js';
@@ -38,13 +38,13 @@ export class AgentRouter {
   constructor(
     private aiProvider: AIProvider,
     private memory: MemoryService,
-    private browserbase: BrowserbaseIntegration,
+    private research: ResearchIntegration,
     private observability?: any
   ) {
     this.mathTutor = new MathTutorAgent(this.aiProvider);
     this.misconceptionDetector = new MisconceptionDetectorAgent(this.aiProvider, this.memory);
     this.quizGenerator = new QuizGeneratorAgent(this.aiProvider);
-    this.resourceFinder = new ResourceFinderAgent(this.browserbase);
+    this.resourceFinder = new ResourceFinderAgent(this.research);
     this.learningPlan = new LearningPlanAgent(this.memory);
 
     const agents: Record<string, SpecialistAgent> = {
@@ -55,11 +55,9 @@ export class AgentRouter {
       LearningPlanAgent: this.learningPlan,
     };
 
-    const fetchConfigured = !!config.FETCH_AGENTVERSE_API_KEY && !!config.FETCH_AGENTVERSE_AGENT_ADDRESS;
-    if (config.FETCH_AGENTVERSE_ENABLED && fetchConfigured) {
+    if (config.FETCH_AGENTVERSE_ENABLED && config.FETCH_AGENT_URL) {
       this.agentProvider = new FetchAgentverseProvider(
-        config.FETCH_AGENTVERSE_API_KEY,
-        config.FETCH_AGENTVERSE_AGENT_ADDRESS,
+        { baseUrl: config.FETCH_AGENT_URL, timeoutMs: config.FETCH_AGENT_TIMEOUT_MS },
         agents
       );
     } else {
@@ -106,7 +104,7 @@ export class AgentRouter {
       const explanationStyle = input.learnerPreferences?.explanationStyle || 'intermediate';
       const screenSummary = input.question;
 
-      const browserbasePromise = this.browserbase.researchConcept(concept, explanationStyle, screenSummary);
+      const researchPromise = this.research.researchConcept(concept, explanationStyle, screenSummary);
       const claudePromise = this.aiProvider.analyzeScreenAndQuestion(
         input,
         onDelta,
@@ -114,7 +112,7 @@ export class AgentRouter {
       );
 
       const [researchResult, claudeResponse] = await Promise.all([
-        browserbasePromise,
+        researchPromise,
         claudePromise
       ]);
 

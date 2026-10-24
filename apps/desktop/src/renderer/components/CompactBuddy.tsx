@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { TutorResponse, TutorMode } from '@screentutor/shared';
 import { parsePointTag } from '@screentutor/shared';
+import { decideCoDriveAction } from '../api/codrive';
 import './CompactBuddy.css';
 
 interface Props {
@@ -92,16 +93,8 @@ export default function CompactBuddy({
 
   const handleApproveAction = async (actionId: string, approved: boolean) => {
     try {
-      const res = await fetch(`http://localhost:4317/api/actions/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actionId, approved })
-      });
-      const data = await res.json();
-      setApprovedActions(prev => ({
-        ...prev,
-        [actionId]: { success: data.success, message: data.message || (approved ? 'Approved' : 'Rejected') }
-      }));
+      const result = await decideCoDriveAction(actionId, approved);
+      setApprovedActions(prev => ({ ...prev, [actionId]: result }));
     } catch (err) {
       console.error('Failed to submit action approval:', err);
     }

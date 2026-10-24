@@ -2,12 +2,12 @@ import { z } from 'zod';
 
 export const SponsorName = z.enum([
   'claude',
-  'gemini',
-  'redis',
-  'browserbase',
-  'simular',
+  'codrive',
+  'convex',
+  'moss',
+  'apify',
   'fetch_agentverse',
-  'arize',
+  'elastic',
   'sentry',
   'cartesia'
 ]);

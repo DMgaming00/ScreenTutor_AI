@@ -1,223 +1,69 @@
-# Sponsor Integrations — ScreenTutor AI
+# Sponsor Integrations — ScreenTutor AI (Cal Hacks 13.0)
 
-ScreenTutor AI integrates exactly seven sponsor technologies. Each integration has a clean interface abstraction with a fully functional mock fallback that runs locally out of the box without requiring external API keys.
+Every integration sits behind an interface with a local fallback, so the app runs with no keys and each sponsor lights up as soon as its env vars are set. The in-app **Sponsor Integration Registry** panel (`GET /api/sponsors/status`) shows each one as `real`, `mock`, `error` or `disabled`.
 
----
-
-## 1. Claude (Anthropic AI)
-
-### Why It Is Used
-Claude is used for visual screen understanding and multi-modal reasoning. It acts as the "brain" of ScreenTutor, reading screenshot pixels and answering tutoring questions by returning structured responses (hints, drawing commands, and speech outputs).
-
-### What Code Uses It
-- **[anthropic-provider.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/providers/anthropic-provider.ts)**: Implements the `AIProvider` interface, making raw POST requests to the Anthropic Messages API.
-- **[mock-provider.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/providers/mock-provider.ts)**: Mock fallback.
-
-### Real vs. Mock Behavior
-- **Real**: Sends the base64 screenshot and prompt to Claude Sonnet, returning a structured JSON matching `TutorResponse`.
-- **Mock**: Matches the selected demo lesson ID and query keyword to return a deterministic, structured tutoring response with precise overlay drawing paths.
-
-### Env Vars
-- `AI_PROVIDER=claude` (to activate real Claude)
-- `ANTHROPIC_API_KEY=sk-ant-...`
-- `CLAUDE_MODEL=claude-3-5-sonnet-20241022`
-
-### Data Sent
-- Base64 image strings of the captured screen (sent only on explicit user action).
-- Question text submitted by the user.
-
-### Privacy Protections
-- Screen capture is blocked entirely if privacy mode is active or the active window title contains key terms on the denylist.
-- Screenshots are processed in memory and never written to disk or logged.
-
-### Demo Step
-1. Open the bundled **Calculus: u-substitution** lesson.
-2. Ask *"Explain this integral"*.
-3. Watch the overlay drawings appear instantly based on the mock visual analysis.
+| Sponsor | Product | Used for | Code | Fallback |
+|---|---|---|---|---|
+| Anthropic | Claude Opus 5.5 | Reading the screenshot and teaching step by step with pointer/drawing tags | `providers/anthropic-provider.ts` | none (required) |
+| Anthropic | Claude computer use (`computer_toolset_20260801`) | Co-drive: proposes the next click / type / key step | `integrations/claude-codrive.ts`, desktop `main/desktop-actions.ts` | mock proposals |
+| Convex | Database + functions | Learner profiles, weak concepts, session history, response cache | `convex/*.ts`, `memory/convex-memory.ts` | in-process memory |
+| Moss | Real-time semantic search | Reusing an answer for a reworded question about the same screen | `cache/moss-index.ts` | exact-match cache only |
+| Apify | RAG Web Browser actor | Research mode: search + scrape + summarize | `integrations/apify.ts` | canned research result |
+| Fetch.ai | uAgents + Agentverse | Study-planner agent: question routing and spaced-repetition plans | `services/fetch-agent/`, `agents/fetch-provider.ts` | local router and agents |
+| Elastic | Observability (managed OTLP) | Per-step traces, latency and evaluation scores | `observability/observability-service.ts` | no-op |
+| Cartesia | Sonic TTS + Ink STT | Streaming voice in and out | `integrations/cartesia.ts`, renderer `api/tts.ts`, `api/transcription.ts` | system voice, browser speech recognition |
+| Sentry | Error tracking | Desktop and orchestrator crash reports | `observability/sentry.ts`, desktop `sentry.ts` | console only |
 
 ---
 
-## 2. Redis
+## Anthropic — Claude Opus 5.5
 
-### Why It Is Used
-Redis provides fast, persistent storage for learner profiles, weak concepts, session turns, and recent questions.
+- **What happens:** the screenshot (JPEG, long edge ≤ 1920 px) and question go to `claude-opus-5-5` at `effort: low`. The reply is schema-enforced JSON (`output_config.format`), `spokenText` streams to the client as it is generated, and the system prompt is prompt-cached.
+- **Env:** `ANTHROPIC_API_KEY`, optional `CLAUDE_MODEL`, `CLAUDE_EFFORT`.
+- **Privacy:** sent only after an explicit capture; blocked on denylisted windows and in privacy mode; screenshots are never stored (only an MD5 hash).
 
-### What Code Uses It
-- **[redis-memory.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/memory/redis-memory.ts)**: Implements `MemoryService` using the `ioredis` package.
-- **[in-memory.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/memory/in-memory.ts)**: InMemory RAM fallback.
+## Anthropic — Claude computer use (Co-drive)
 
-### Real vs. Mock Behavior
-- **Real**: Reads/writes profiles (`screentutor:profile:{userId}`) and appends session turns (`screentutor:session:{sessionId}:turns`) to Redis.
-- **Mock / Fallback**: If `REDIS_URL` is omitted or connection fails, the orchestrator prints a warning and falls back to `InMemoryService` in RAM.
+- **What happens:** in Co-drive mode the goal and screenshot go to Claude with the computer toolset (drag, mouse-down/up, hold-key, zoom disabled). Up to three `left_click` / `double_click` / `right_click` / `type` / `key` / `scroll` calls become approval cards with normalized coordinates. Planning runs in parallel with the tutor's answer.
+- **Execution:** an approved card is handed to the Electron main process, which re-checks privacy mode and the window denylist, maps the point to the right display, and performs it with Windows input APIs (typing is pasted via the clipboard, then the clipboard is restored).
+- **Env:** `CODRIVE_ENABLED` (default on), `ENABLE_SAFE_ACTIONS` (default **off** — cards are shown but nothing is performed).
+- **Safety:** every action needs a click to approve; `checkActionSafety` blocks deletes, terminals, sending messages, purchases and credentials; actions are single-use.
 
-### Env Vars
-- `REDIS_URL=redis://localhost:6379`
-- `MEMORY_ENABLED=true`
+## Convex — learner memory
 
-### Data Sent
-- Learner profile metadata (weak/strong concepts, confidence metrics, and rolling lists of summarized questions).
-- Session turn metadata (timestamps, selected agent, coordinate validity, and screenshot hashes).
+- **What happens:** `convex/memory.ts` holds queries/mutations for profiles, weak concepts (one row per concept, updated atomically), session turns and cache entries; a cron purges expired cache rows every 15 minutes. The orchestrator calls them with `ConvexHttpClient` and caches profiles in-process between writes.
+- **Env:** `CONVEX_URL`, `SCREENTUTOR_CONVEX_SECRET` (also set on the deployment with `npx convex env set`). Every function rejects calls without the secret.
+- **Demo:** ask two questions, open the Memory panel, then the Convex dashboard's `weakConcepts` table.
 
-### Privacy Protections
-- Raw screenshots are **never** written to Redis; only the MD5 hash is stored.
-- Memory updates are completely skipped if memory is disabled in the profile or if privacy mode is active.
+## Moss — semantic cache
 
-### Demo Step
-1. Trigger a lesson question and review the updated weak concepts list.
-2. Open the **Memory** panel to view the saved profiles.
-3. Toggle memory recording off and verify that no subsequent questions are logged.
-4. Click **Clear Memory** to execute the database purge.
+- **What happens:** each cached tutor answer is indexed in Moss by its question text with scope metadata (mode, screenshot hash, lesson, style, weak concepts). On an exact-key miss, a query restricted to the same scope with `minScore ≥ 0.9` can return the earlier answer. Queries run on the locally loaded index (no network round trip).
+- **Env:** `MOSS_PROJECT_ID`, `MOSS_PROJECT_KEY`, optional `MOSS_MIN_SCORE`, `MOSS_INDEX_NAME`.
+- **Privacy:** an answer is never reused for a different screenshot.
 
----
+## Apify — web research
 
-## 3. Browserbase
+- **What happens:** Research mode queries the RAG Web Browser actor (`rag-web-browser.apify.actor/search`) for "<concept> explained <level> level", then summarizes the first prose paragraph of the top page and lists the other results as takeaways, with source URLs. Results are cached in Convex.
+- **Env:** `APIFY_API_TOKEN`.
 
-### Why It Is Used
-Browserbase is a headless browser platform used to navigate educational websites and scrape context summaries when the user enters **Research** mode.
+## Fetch.ai — study-planner agent
 
-### What Code Uses It
-- **[browserbase.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/integrations/browserbase.ts)**: Handles REST API calls to the Browserbase service.
-- **[resource-finder.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/agents/resource-finder.ts)**: Routes requests to Browserbase.
+- **What happens:** `services/fetch-agent/agent.py` is a uAgent registered on Agentverse through a mailbox. The orchestrator calls its REST endpoints — `POST /route` on each turn (800 ms timeout) and `POST /learning-plan` for review requests, which ranks weak concepts by struggle, repetition and time since last practice.
+- **Env:** `FETCH_AGENTVERSE_ENABLED`, `FETCH_AGENT_URL`, `FETCH_AGENT_SEED` (agent side).
+- **Privacy:** receives question text, mode and weak-concept statistics only — never screenshots.
 
-### Real vs. Mock Behavior
-- **Real**: Spawns a headless browser session to request a page (e.g. Wikipedia), retrieves the content in markdown format, and extracts key takeaways.
-- **Mock**: Returns predefined summaries and citation urls immediately.
+## Elastic — observability
 
-### Env Vars
-- `BROWSERBASE_ENABLED=true`
-- `BROWSERBASE_API_KEY=your-key`
-- `BROWSERBASE_PROJECT_ID=your-project-id`
+- **What happens:** each request is a root span with one child span per pipeline step (privacy check, context fetch, model call, research, Co-drive, memory), with events and `eval.*` scores, exported over OTLP/HTTP protobuf. The provider is not registered globally, so it does not clash with Sentry's OpenTelemetry setup.
+- **Env:** `ELASTIC_OTLP_ENDPOINT`, `ELASTIC_API_KEY` (sent as `Authorization: ApiKey …`).
+- **Privacy:** all attributes pass through `RedactionService` before export.
 
-### Data Sent
-- The research query topic or concept keywords (e.g. `u_substitution`, `chain_rule`).
+## Cartesia — voice
 
-### Privacy Protections
-- Requests are blocked if the user is in privacy mode or focused on a denied application title.
+- **What happens:** the orchestrator mints short-lived Cartesia access tokens (`/api/voice/session`); the desktop app streams microphone PCM to Ink STT while push-to-talk is held, and plays Sonic TTS audio chunks as they arrive.
+- **Env:** `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID`.
 
-### Demo Step
-1. Switch to the **Research** tab.
-2. Submit the question *"Research u-substitution techniques"*.
-3. Review the returned markdown summary card with source citation URLs.
+## Sentry — errors
 
----
-
-## 4. Simular
-
-### Why It Is Used
-Simular provides agentic computer control capabilities to propose keyboard/mouse interactions on the user's desktop when in **Co-drive** mode.
-
-### What Code Uses It
-- **[simular.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/integrations/simular.ts)**: Implements the Simular proposed action interfaces.
-
-### Real vs. Mock Behavior
-- **Real**: Resolves natural language goals to mouse click coordinate vectors and inputs text using Simular's model.
-- **Mock**: Returns simulated, safe action items (e.g., clicking a "Next Problem" button).
-
-### Env Vars
-- `SIMULAR_ENABLED=true`
-- `SIMULAR_API_KEY=your-simular-key`
-- `ENABLE_SAFE_ACTIONS=true` (global safety switch)
-
-### Data Sent
-- Target question and active application window title.
-
-### Privacy Protections
-- All actions require **explicit user approval** in the UI via card interfaces before they are executed.
-- `checkActionSafety` blocks any high-risk action descriptions (e.g., matching terminal, buying, deleting files, or password inputs).
-- Blocked in privacy mode.
-
-### Demo Step
-1. Open the **Co-drive** tab.
-2. Observe the proposed mouse click cards matching your task context.
-3. Show the risk badge level indicator (e.g. `Low Risk`).
-4. Click **Approve** or **Reject** to test the verification check.
-
----
-
-## 5. Fetch AI / Agentverse
-
-### Why It Is Used
-Fetch AI inspired the multi-agent routing model of ScreenTutor. Agent Router routes queries to specialized sub-agents based on context keywords and modes.
-
-### What Code Uses It
-- **[agent-router.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/agents/agent-router.ts)**: Coordinates agent routing.
-- **[fetch-provider.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/agents/fetch-provider.ts)**: Integrates with Agentverse endpoints.
-
-### Real vs. Mock Behavior
-- **Real**: Looks up published agent addresses on the Agentverse directory and delegates reasoning to them.
-- **Mock / Local**: Routes queries locally to standard agent classes (`MathTutor`, `MisconceptionDetector`, `QuizGenerator`, `LearningPlan`, `ResourceFinder`).
-
-### Env Vars
-- `FETCH_AGENTVERSE_ENABLED=true`
-- `FETCH_AGENTVERSE_API_KEY=your-fetch-key`
-- `FETCH_AGENTVERSE_AGENT_ADDRESS=agent-address-here`
-
-### Data Sent
-- User questions and preference settings.
-
-### Privacy Protections
-- Local-first execution falls back to local routing if Agentverse credentials are not provided.
-- Denylisted text and raw screenshots are stripped from the payload prior to routing.
-
-### Demo Step
-1. Type *"Quiz me on derivatives"* in the prompt.
-2. Look at the terminal logs to see the routing decision: `[Agent Router Routing Decision] Routing query: "Quiz me..." to QuizGeneratorAgent.`
-
----
-
-## 6. Arize
-
-### Why It Is Used
-Arize/Phoenix is used for large language model (LLM) observability. It records trace spans, logs execution steps (AI model call, memory writes, research lookups), captures latencies, and logs evaluations.
-
-### What Code Uses It
-- **[observability-service.ts](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/observability/observability-service.ts)**: Sends tracing spans to the Arize Phoenix collector.
-
-### Real vs. Mock Behavior
-- **Real**: Resolves traces and POSTs telemetry spans to local or cloud Phoenix collectors.
-- **Mock**: Prints clean telemetry summaries to the server console out.
-
-### Env Vars
-- `ARIZE_ENABLED=true`
-- `ARIZE_API_KEY=your-arize-key`
-- `PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces`
-
-### Data Sent
-- Spans, execution times, latency metrics, input prompt strings (redacted), and model parameters.
-
-### Privacy Protections
-- A shared `RedactionService` scrubs screenshots, accessibility trees, query parameters, passwords, and emails from all logs before they are posted to Phoenix.
-
-### Demo Step
-1. Submit a question in the desktop UI.
-2. View the console logs to see the trace ID and evaluations printed (e.g. `point_tag_valid=1`).
-
----
-
-## 7. Sentry
-
-### Why It Is Used
-Sentry provides runtime exception reporting and crash analytics for the desktop main process, Electron renderer, and orchestrator backend.
-
-### What Code Uses It
-- **[sentry.ts (desktop main)](file:///C:/Users/User/Desktop/2nd_brain/apps/desktop/src/main/sentry.ts)**: Configures Sentry Node for Electron.
-- **[sentry.ts (desktop renderer)](file:///C:/Users/User/Desktop/2nd_brain/apps/desktop/src/renderer/sentry.ts)**: Configures Sentry React.
-- **[sentry.ts (orchestrator)](file:///C:/Users/User/Desktop/2nd_brain/services/orchestrator/src/observability/sentry.ts)**: Configures Sentry on the Fastify backend.
-
-### Real vs. Mock Behavior
-- **Real**: Transmits crash stack traces and performance profiling directly to Sentry dashboard.
-- **Mock / Disabled**: Silently logs exceptions to the local console without making external posts.
-
-### Env Vars
-- `SENTRY_ENABLED=true`
-- `SENTRY_DSN=https://your-dsn-key@o0.ingest.sentry.io/0`
-
-### Data Sent
-- Error message strings, trace stacks, system details (OS version, Electron version).
-
-### Privacy Protections
-- All events are scrubbed recursively through `RedactionService.redactMetadata` inside Sentry's `beforeSend` interceptors. API keys, emails, passwords, and raw base64 screenshots are completely redacted.
-
-### Demo Step
-1. Trigger a mock error using the debug button in the desktop UI.
-2. Verify in Sentry panel that the error was recorded with all sensitive data redacted.
+- **What happens:** desktop main, renderer and orchestrator exceptions, redacted in `beforeSend`.
+- **Env:** `SENTRY_ENABLED`, `SENTRY_DSN`.

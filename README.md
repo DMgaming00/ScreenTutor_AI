@@ -3,7 +3,7 @@
 **A cursor-native AI tutor that lives near your cursor, captures the screen on demand, and draws overlays directly on top of your windows.**
 
 ![Mock AI Mode](https://img.shields.io/badge/Mock_AI-Included-blueviolet)
-![Redis Optional](https://img.shields.io/badge/Redis-Optional-green)
+![Convex Memory](https://img.shields.io/badge/Convex-Memory-orange)
 ![Privacy First](https://img.shields.io/badge/Privacy-First-blue)
 
 ---
@@ -13,7 +13,8 @@
 - **Cursor-Native Buddy**: Buddy lives near your cursor, follows you around in a compact bubble state, and expands to a full chat panel on request. When explaining concepts, Buddy smoothly animates (flies) to coordinates on your screen to point at items.
 - **Captures Screen on Demand**: Trigger screen capture explicitly using `Ctrl+Shift+E` or the floating microphone button. Never records in the background or polls your screen silently.
 - **Draws Overlays on Top of Apps**: Draws circles, arrows, highlighters, step badges, and text labels directly on a transparent SVG window layered over your active screen content.
-- **Remembers Weak Concepts**: Uses Redis (or in-memory fallback) to log weak concepts, track question patterns, and adapt explanation styles dynamically.
+- **Remembers Weak Concepts**: Stores learner profiles and session history in Convex (or an in-memory fallback), and builds spaced-repetition study plans with a Fetch.ai agent.
+- **Co-drive**: Claude computer use proposes the next click or keystroke; nothing happens on your desktop until you approve it.
 - **Speech Interactivity**: Push-to-talk microphone input records audio chunk sessions safely. Text-to-speech engine speaks answers out loud while stripping coordinate tags.
 
 ---
@@ -23,7 +24,7 @@
 ### Prerequisites
 - **Node.js 20+**
 - **pnpm 9+**
-- **Docker** (optional — only needed for Redis container)
+- **Python 3.11+** (optional — only for the Fetch.ai study-planner agent)
 
 ### Install & Run
 ```bash
@@ -37,8 +38,10 @@ pnpm install
 # 3. Create env file
 cp .env.example .env
 
-# 4. Start Redis (optional — falls back to in-memory)
-docker compose up -d redis
+# 4. Start Convex for learner memory (optional — falls back to in-memory)
+cd services/orchestrator && npx convex dev   # leave running; copy the URL into CONVEX_URL
+
+# 4b. Start the Fetch.ai study planner (optional — see services/fetch-agent/README.md)
 
 # 5. Start development environment (orchestrator + desktop concurrently)
 powershell -ExecutionPolicy Bypass -Command "pnpm dev"
@@ -57,13 +60,20 @@ AI_PROVIDER=mock
 MEMORY_ENABLED=true
 ```
 
-### 2. Redis Memory
-To persist profile records, weak concepts, and user sessions across app restarts.
+### 2. Convex (Memory)
+Learner profiles, weak concepts, session turns and the response cache live in Convex. Functions are in `services/orchestrator/convex/`.
 ```env
-REDIS_URL=redis://localhost:6379
-MEMORY_ENABLED=true
+CONVEX_URL=https://your-deployment.convex.cloud   # printed by `npx convex dev`
+SCREENTUTOR_CONVEX_SECRET=any-long-random-string
 ```
-*Note: If Redis is unavailable or fails to connect, the orchestrator automatically logs a warning and falls back to `InMemoryService` in RAM.*
+Set the same secret on the deployment: `npx convex env set SCREENTUTOR_CONVEX_SECRET <value>`. Without these, the orchestrator uses in-process memory.
+
+### Moss (Semantic Cache)
+Reuses an answer when a reworded question is asked about the *same* screenshot.
+```env
+MOSS_PROJECT_ID=your-project-id
+MOSS_PROJECT_KEY=your-project-key
+```
 
 ### 3. Claude (Anthropic AI)
 For real-time multi-modal screen capture analysis and chat responses.
@@ -81,39 +91,34 @@ CARTESIA_API_KEY=sk_car_your-key
 CARTESIA_VOICE_ID=your-voice-id
 ```
 
-### 4. Browserbase (Research Mode)
-Allows the tutor to spawn headless browser sessions to search Wikipedia/web resources for tutoring material.
+### Apify (Research Mode)
+Searches the web for the concept at the learner's level and summarizes the top pages (RAG Web Browser actor).
 ```env
-BROWSERBASE_ENABLED=true
-BROWSERBASE_API_KEY=your-api-key
-BROWSERBASE_PROJECT_ID=your-project-id
+APIFY_API_TOKEN=apify_api_your-token
 ```
 
-### 5. Simular (Co-drive Actions)
-Proposes desktop actions (clicks, keypresses) that the user can review and approve.
+### Claude Computer Use (Co-drive)
+Uses your `ANTHROPIC_API_KEY`. Claude proposes up to three steps as approval cards; approved steps run on your desktop (Windows) only when desktop control is on.
 ```env
-SIMULAR_ENABLED=true
-SIMULAR_API_KEY=your-simular-key
-ENABLE_SAFE_ACTIONS=true
+CODRIVE_ENABLED=true
+ENABLE_SAFE_ACTIONS=true   # off by default: approvals are shown but not performed
 ```
 
-### 6. Fetch AI / Agentverse (Specialist Agent Routing)
-Registers and routes tutoring tasks to local or remote Fetch-compatible agents.
+### Fetch.ai / Agentverse (Study Planner Agent)
+A uAgent in `services/fetch-agent` routes questions and builds spaced-repetition study plans; it registers on Agentverse via a mailbox.
 ```env
 FETCH_AGENTVERSE_ENABLED=true
-FETCH_AGENTVERSE_API_KEY=your-agentverse-key
-FETCH_AGENTVERSE_AGENT_ADDRESS=agent-address-here
+FETCH_AGENT_URL=http://localhost:8001
 ```
 
-### 7. Arize / Phoenix (Observability Tracing)
-Tracks telemetry spans, latency metrics, and LLM evaluations.
+### Elastic (Observability)
+Each tutoring step is exported as an OpenTelemetry span (OTLP/HTTP protobuf) with latencies and evaluation scores.
 ```env
-ARIZE_ENABLED=true
-ARIZE_API_KEY=your-arize-key
-PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
+ELASTIC_OTLP_ENDPOINT=https://<id>.ingest.<region>.elastic.cloud:443
+ELASTIC_API_KEY=your-api-key
 ```
 
-### 8. Sentry (Error Tracking)
+### Sentry (Error Tracking)
 Captures backend runtime errors and desktop crashes.
 ```env
 SENTRY_ENABLED=true
@@ -126,7 +131,7 @@ SENTRY_DSN=https://your-dsn-key@o0.ingest.sentry.io/0
 
 - **On-Demand Capture Only**: Captures the screen only when the hotkey is triggered. No background polling or recordings.
 - **Sensitive Window Denylist**: Analysis is immediately blocked if any of the 16 sensitive window title terms (e.g. `password`, `keychain`, `bank`, `email`, `stripe`) are active.
-- **Data Redaction Layer**: A shared `RedactionService` automatically strips passwords, API keys, emails, credit cards, and query parameters from all logs, Sentry events, Arize telemetry, and UI debug views.
+- **Data Redaction Layer**: A shared `RedactionService` automatically strips passwords, API keys, emails, credit cards, and query parameters from all logs, Sentry events, Elastic traces, and UI debug views.
 - **Developer Redaction Override**: Available as a toggle in the developer panel, allowing developers to see raw data for debugging. It is turned off by default.
 - **No Screenshot Storage**: Screenshots are processed in memory and never written to disk or sent to observability endpoints. Only a secure MD5 hash is stored.
 
@@ -148,9 +153,9 @@ Selecting a lesson displays a static lesson preview and allows you to test the h
 
 ## Troubleshooting
 
-### `Error: connect ECONNREFUSED 127.0.0.1:6379`
-- **Cause**: Redis container is not running.
-- **Fix**: Redis is completely optional. The app falls back to memory storage. To enable Redis, start the container: `docker compose up -d redis`.
+### `Failed to reach Convex, falling back to InMemoryService`
+- **Cause**: `CONVEX_URL` is wrong, `npx convex dev` isn't running, or the secret doesn't match the deployment's `SCREENTUTOR_CONVEX_SECRET`.
+- **Fix**: Memory is optional; the app keeps working in RAM. Re-run `npx convex env set SCREENTUTOR_CONVEX_SECRET <value>` with the value from `.env`.
 
 ### Hotkey `Ctrl+Shift+E` Not Working
 - **macOS**: Ensure Electron has **Accessibility** permissions granted in System Preferences → Privacy & Security → Accessibility.

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { TutorOrchestrator } from '../orchestrator/tutor-orchestrator.js';
 import { InMemoryService } from '../memory/in-memory.js';
 import { AgentRouter } from '../agents/agent-router.js';
-import { MockBrowserbaseService } from '../integrations/browserbase.js';
-import { MockSimularService } from '../integrations/simular.js';
+import { MockResearchService } from '../integrations/research.js';
+import { MockCoDriveService } from '../integrations/codrive.js';
 import { NoopObservabilityService } from '../observability/observability-service.js';
 import type { AIProvider } from '../providers/ai-provider.js';
 import type { TutorInput, TutorResponse } from '@screentutor/shared';
@@ -36,9 +36,9 @@ describe('TutorOrchestrator session history', () => {
     orchestrator = new TutorOrchestrator(
       aiProvider,
       memory,
-      new AgentRouter(aiProvider, memory, new MockBrowserbaseService()),
-      new MockBrowserbaseService(),
-      new MockSimularService(),
+      new AgentRouter(aiProvider, memory, new MockResearchService()),
+      new MockResearchService(),
+      new MockCoDriveService(),
       new NoopObservabilityService()
     );
   });

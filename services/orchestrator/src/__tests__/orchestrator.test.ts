@@ -4,8 +4,8 @@ import { MockClaudeProvider } from '../providers/mock-provider.js';
 import { InMemoryService } from '../memory/in-memory.js';
 import { RedisMemoryService } from '../memory/redis-memory.js';
 import { AgentRouter } from '../agents/agent-router.js';
-import { MockBrowserbaseService } from '../integrations/browserbase.js';
-import { MockSimularService } from '../integrations/simular.js';
+import { MockResearchService } from '../integrations/research.js';
+import { MockCoDriveService } from '../integrations/codrive.js';
 import { NoopObservabilityService } from '../observability/observability-service.js';
 
 let shouldRedisFail = false;
@@ -108,15 +108,15 @@ vi.mock('ioredis', () => {
 describe('TutorOrchestrator Integration Tests', () => {
   let orchestrator: TutorOrchestrator;
   let memory: InMemoryService;
-  let browserbase: MockBrowserbaseService;
-  let simular: MockSimularService;
+  let browserbase: MockResearchService;
+  let simular: MockCoDriveService;
   let aiProvider: MockClaudeProvider;
 
   beforeEach(() => {
     shouldRedisFail = false;
     memory = new InMemoryService();
-    browserbase = new MockBrowserbaseService();
-    simular = new MockSimularService();
+    browserbase = new MockResearchService();
+    simular = new MockCoDriveService();
     aiProvider = new MockClaudeProvider();
     orchestrator = new TutorOrchestrator(
       aiProvider,

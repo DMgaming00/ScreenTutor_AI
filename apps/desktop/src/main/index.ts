@@ -14,6 +14,7 @@ import {
   type CaptureResult,
 } from './screenshot.js';
 import { isWindowDenied, togglePrivacyMode, getPrivacyMode, getActiveWindowTitle } from './privacy.js';
+import { performApprovedAction } from './desktop-actions.js';
 import { registerHoldDictationShortcuts, unregisterHoldDictationShortcuts } from './shortcuts.js';
 import * as Sentry from '@sentry/node';
 import { initSentry } from './sentry.js';
@@ -468,6 +469,10 @@ ipcMain.on('simulate-overlay-error', () => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('trigger-overlay-error');
   }
+});
+
+ipcMain.handle('execute-approved-action', async (_event, action) => {
+  return performApprovedAction(action);
 });
 
 ipcMain.handle('get-active-window-title', async () => {
