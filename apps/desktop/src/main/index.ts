@@ -16,6 +16,8 @@ import {
 import { isWindowDenied, togglePrivacyMode, getPrivacyMode, getActiveWindowTitle } from './privacy.js';
 import { performApprovedAction } from './desktop-actions.js';
 import { registerHoldDictationShortcuts, unregisterHoldDictationShortcuts } from './shortcuts.js';
+import { isMac } from './platform.js';
+import { ensureMicrophone, getPermissionStatus, openPermissionSettings, type PermissionKind } from './permissions.js';
 import * as Sentry from '@sentry/node';
 import { initSentry } from './sentry.js';
 
@@ -207,6 +209,8 @@ function createOverlay() {
       focusable: false,
       resizable: false,
       skipTaskbar: true,
+      // macOS clamps windows below the menu bar unless this is set; the overlay must cover the whole display.
+      enableLargerThanScreen: isMac,
       show: false, // Prevent flashing, show once ready-to-show fires
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -216,6 +220,8 @@ function createOverlay() {
     });
 
     overlayWindow.setAlwaysOnTop(true, TOPMOST_LEVEL);
+    // macOS: keep the overlay visible over full-screen apps and on every Space.
+    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     overlayWindow.setIgnoreMouseEvents(true); // fully click-through
 
     overlayWindow.once('ready-to-show', () => {
@@ -249,6 +255,12 @@ app.whenReady().then(() => {
     createOverlay();
 
     void registerHoldDictationShortcuts(notifyHoldDictationStart, notifyHoldDictationEnd);
+
+    if (isMac) {
+      const status = getPermissionStatus();
+      console.log(`[Permissions] screen=${status.screen} microphone=${status.microphone} accessibility=${status.accessibility}`);
+      void ensureMicrophone().catch((err) => console.warn('[Permissions] Microphone request failed:', err));
+    }
 
     console.log('ScreenTutor AI Started');
   } catch (error) {
@@ -477,4 +489,10 @@ ipcMain.handle('execute-approved-action', async (_event, action) => {
 
 ipcMain.handle('get-active-window-title', async () => {
   return await getActiveWindowTitle();
+});
+
+ipcMain.handle('get-permission-status', () => getPermissionStatus());
+
+ipcMain.on('open-permission-settings', (_event, kind: PermissionKind) => {
+  if (kind === 'screen' || kind === 'microphone' || kind === 'accessibility') openPermissionSettings(kind);
 });

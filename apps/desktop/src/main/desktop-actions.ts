@@ -1,23 +1,38 @@
 import { clipboard, screen } from 'electron';
-import { mapNormalizedToDisplayLocal, type ProposedAction } from '@screentutor/shared';
+import { mapNormalizedToDisplayLocal, translateComboForPlatform, type ProposedAction } from '@screentutor/shared';
 import { capturedDisplays, lastCaptureRegion, updateCapturedDisplays } from './screenshot.js';
 import { getActiveWindowTitle, getPrivacyMode, isWindowDenied } from './privacy.js';
+import { isMac, isWindows, PASTE_COMBO } from './platform.js';
+import { ensureAccessibility, openPermissionSettings } from './permissions.js';
 
 export interface DesktopActionResult {
   success: boolean;
   message: string;
 }
 
-type Win32Input = typeof import('./desktop-input.win32.js');
-let win32: Promise<Win32Input | null> | null = null;
+/** Common surface of the per-OS input backends (desktop-input.win32.ts / .darwin.ts). */
+interface DesktopInput {
+  click(x: number, y: number, button: 'left' | 'right', count: number, modifiers?: string): void;
+  scroll(direction: 'up' | 'down' | 'left' | 'right', amount: number, at?: { x: number; y: number }): void;
+  pressCombo(combo: string): void;
+}
 
-function loadWin32(): Promise<Win32Input | null> {
-  if (process.platform !== 'win32') return Promise.resolve(null);
-  win32 ??= import('./desktop-input.win32.js').catch((err) => {
-    console.error('[Co-drive] Failed to load Windows input:', err);
-    return null;
-  });
-  return win32;
+let inputBackend: Promise<DesktopInput | null> | null = null;
+
+function loadInput(): Promise<DesktopInput | null> {
+  if (inputBackend) return inputBackend;
+  const load: Promise<DesktopInput> | null = isWindows
+    ? import('./desktop-input.win32.js')
+    : isMac
+      ? import('./desktop-input.darwin.js')
+      : null;
+  inputBackend = load
+    ? load.catch((err) => {
+        console.error('[Co-drive] Failed to load desktop input backend:', err);
+        return null;
+      })
+    : Promise.resolve(null);
+  return inputBackend;
 }
 
 /** Normalized screenshot coordinates -> physical screen pixels for input APIs. */
@@ -36,7 +51,8 @@ function toScreenPoint(action: ProposedAction): { x: number; y: number } | null 
     x: local.targetDisplay.displayFrameX + local.localX,
     y: local.targetDisplay.displayFrameY + local.localY,
   };
-  return process.platform === 'win32' ? screen.dipToScreenPoint(dip) : dip;
+  // Windows input APIs want physical pixels; macOS CoreGraphics uses points, same as Electron.
+  return isWindows ? screen.dipToScreenPoint(dip) : dip;
 }
 
 /**
@@ -56,9 +72,16 @@ export async function performApprovedAction(action: ProposedAction): Promise<Des
     return { success: false, message: 'The active window is on the privacy denylist; action skipped.' };
   }
 
-  const input = await loadWin32();
+  const input = await loadInput();
   if (!input) {
-    return { success: false, message: 'Desktop control is only implemented on Windows so far. Please do this step yourself.' };
+    return { success: false, message: 'Desktop control is only implemented on Windows and macOS. Please do this step yourself.' };
+  }
+  if (isMac && !ensureAccessibility()) {
+    openPermissionSettings('accessibility');
+    return {
+      success: false,
+      message: 'Co-drive needs Accessibility access. Enable ScreenTutor (or Electron in dev) in System Settings > Privacy & Security > Accessibility, then approve the step again.',
+    };
   }
 
   try {
@@ -74,14 +97,16 @@ export async function performApprovedAction(action: ProposedAction): Promise<Des
         // Paste instead of per-character key events: handles any Unicode and is instant.
         const previous = clipboard.readText();
         clipboard.writeText(action.text);
-        input.pressCombo('ctrl+v');
+        input.pressCombo(PASTE_COMBO);
         setTimeout(() => clipboard.writeText(previous), 500);
         return { success: true, message: 'Typed.' };
       }
       case 'hotkey': {
         if (!action.text) return { success: false, message: 'No key to press.' };
-        input.pressCombo(action.text);
-        return { success: true, message: `Pressed ${action.text}.` };
+        // Claude emits Windows/Linux-style combos; map Ctrl -> Cmd for app shortcuts on macOS.
+        const combo = translateComboForPlatform(action.text, process.platform);
+        input.pressCombo(combo);
+        return { success: true, message: `Pressed ${combo}.` };
       }
       case 'scroll': {
         if (!action.scroll) return { success: false, message: 'No scroll direction.' };

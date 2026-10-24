@@ -11,7 +11,7 @@
 ## What It Does
 
 - **Cursor-Native Buddy**: Buddy lives near your cursor, follows you around in a compact bubble state, and expands to a full chat panel on request. When explaining concepts, Buddy smoothly animates (flies) to coordinates on your screen to point at items.
-- **Captures Screen on Demand**: Trigger screen capture explicitly using `Ctrl+Shift+E` or the floating microphone button. Never records in the background or polls your screen silently.
+- **Captures Screen on Demand**: Trigger screen capture explicitly using `Ctrl+Shift+E` (`Cmd+Shift+E` on macOS) or the floating microphone button. Never records in the background or polls your screen silently.
 - **Draws Overlays on Top of Apps**: Draws circles, arrows, highlighters, step badges, and text labels directly on a transparent SVG window layered over your active screen content.
 - **Remembers Weak Concepts**: Stores learner profiles and session history in Convex (or an in-memory fallback), and builds spaced-repetition study plans with a Fetch.ai agent.
 - **Co-drive**: Claude computer use proposes the next click or keystroke; nothing happens on your desktop until you approve it.
@@ -29,8 +29,8 @@
 ### Install & Run
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
-cd 2nd_brain
+git clone https://github.com/DMgaming00/ScreenTutor_AI.git
+cd ScreenTutor_AI
 
 # 2. Install dependencies
 pnpm install
@@ -44,7 +44,7 @@ cd services/orchestrator && npx convex dev   # leave running; copy the URL into 
 # 4b. Start the Fetch.ai study planner (optional — see services/fetch-agent/README.md)
 
 # 5. Start development environment (orchestrator + desktop concurrently)
-powershell -ExecutionPolicy Bypass -Command "pnpm dev"
+pnpm dev                       # same command on Windows (PowerShell/cmd) and macOS (Terminal)
 ```
 
 ---
@@ -100,7 +100,7 @@ APIFY_API_TOKEN=apify_api_your-token
 ```
 
 ### Claude Computer Use (Co-drive)
-Uses your `ANTHROPIC_API_KEY`. Claude proposes up to three steps as approval cards; approved steps run on your desktop (Windows) only when desktop control is on.
+Uses your `ANTHROPIC_API_KEY`. Claude proposes up to three steps as approval cards; approved steps run on your desktop (Windows and macOS) only when desktop control is on. On macOS, grant Accessibility permission when prompted.
 ```env
 CODRIVE_ENABLED=true
 ENABLE_SAFE_ACTIONS=true   # off by default: approvals are shown but not performed
@@ -126,6 +126,14 @@ Captures backend runtime errors and desktop crashes.
 SENTRY_ENABLED=true
 SENTRY_DSN=https://your-dsn-key@o0.ingest.sentry.io/0
 ```
+
+---
+
+## macOS notes
+
+- **Permissions**: Screen Recording (capture), Microphone (voice) and Accessibility (Co-drive) are requested on first use. Status is logged at startup as `[Permissions] ...`.
+- **Build a `.dmg`**: `pnpm dist:mac` (output in `apps/desktop/release/`). Unsigned builds need right-click → Open the first time; distributing to others needs an Apple Developer ID certificate and notarization.
+- **Windows installer**: `pnpm dist:win`.
 
 ---
 
@@ -159,12 +167,12 @@ Selecting a lesson displays a static lesson preview and allows you to test the h
 - **Cause**: `CONVEX_URL` is wrong, `npx convex dev` isn't running, or the secret doesn't match the deployment's `SCREENTUTOR_CONVEX_SECRET`.
 - **Fix**: Memory is optional; the app keeps working in RAM. Re-run `npx convex env set SCREENTUTOR_CONVEX_SECRET <value>` with the value from `.env`.
 
-### Hotkey `Ctrl+Shift+E` Not Working
-- **macOS**: Ensure Electron has **Accessibility** permissions granted in System Preferences → Privacy & Security → Accessibility.
+### Hotkey `Ctrl+Shift+E` (`Cmd+Shift+E` on macOS) Not Working
+- **macOS**: The hold-to-talk hotkey is detected by polling key state (not expected to need extra permission, but untested on every macOS version), while Co-drive clicks and keystrokes need **Accessibility** in System Settings → Privacy & Security → Accessibility. If push-to-talk never starts, set `SCREENTUTOR_HOTKEY_MODE=toggle` in `.env` (press once to start, again to stop).
 - **Windows**: Run as Administrator if hotkeys are intercepted by other fullscreen windows.
 
 ### Screen Capture Black / Empty
-- **macOS**: Ensure Electron has **Screen Recording** permissions granted in System Preferences → Privacy & Security → Screen Recording.
+- **macOS**: Grant **Screen Recording** in System Settings → Privacy & Security → Screen Recording, then quit and relaunch the app (macOS only applies it on restart). In `pnpm dev` the permission belongs to the **Electron** binary (or your terminal app), not ScreenTutor.
 
 ### `listen EADDRINUSE :::4317`
 - **Cause**: Port 4317 is already in use by another process.

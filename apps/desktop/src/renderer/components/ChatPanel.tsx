@@ -11,6 +11,7 @@ import { decideCoDriveAction } from '../api/codrive';
 import type { ChatTurn } from '../hooks/useChatHistory';
 import type { StoredExplanation } from '../types/explanation';
 import './ChatPanel.css';
+import { HOLD_HOTKEY_LABEL } from '../platform';
 
 interface Props {
   screenshot: { base64: string } | null;
@@ -737,7 +738,7 @@ export default function ChatPanel({
             <span className="waveform-bar bar4"></span>
             <span className="waveform-bar bar5"></span>
           </div>
-          <span className="voice-recording-text">Listening… release Ctrl+Shift+E or the mic button to send</span>
+          <span className="voice-recording-text">Listening… release {HOLD_HOTKEY_LABEL} or the mic button to send</span>
         </div>
       ) : (
         !showMemory && !showSponsors && (

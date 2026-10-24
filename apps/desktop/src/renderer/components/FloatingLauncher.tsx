@@ -1,5 +1,6 @@
 import TutorCursorIcon from './TutorCursorIcon';
 import './FloatingLauncher.css';
+import { HOLD_HOTKEY_LABEL } from '../platform';
 
 interface Props {
   state: 'idle' | 'listening' | 'thinking' | 'responding' | 'pointing' | 'error' | 'privacy';
@@ -25,7 +26,7 @@ export default function FloatingLauncher({
       case 'responding': return 'Speaking response...';
       case 'error': return 'An error occurred';
       case 'privacy': return 'Privacy mode active';
-      default: return 'Hold Ctrl+Shift+E to speak · Click for sidebar';
+      default: return `Hold ${HOLD_HOTKEY_LABEL} to speak · Click for sidebar`;
     }
   };
 

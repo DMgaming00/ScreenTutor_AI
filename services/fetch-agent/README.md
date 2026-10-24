@@ -18,9 +18,9 @@ It never receives screenshots, only the question text, mode, and weak-concept st
 
 ```bash
 cd services/fetch-agent
-python -m venv .venv
+python -m venv .venv                      # macOS: python3 -m venv .venv
 .venv/Scripts/pip install -r requirements.txt   # macOS/Linux: .venv/bin/pip
-.venv/Scripts/python agent.py
+.venv/Scripts/python agent.py                   # macOS/Linux: .venv/bin/python agent.py
 ```
 
 On first start the log prints the agent address and an Agent Inspector link. Open it and connect the mailbox to publish the agent on Agentverse. Set `FETCH_AGENT_SEED` to a private value so the address stays stable and can't be claimed by someone else.
