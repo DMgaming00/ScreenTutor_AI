@@ -174,25 +174,25 @@ export class SponsorRegistry {
       lastHealthCheckAt: new Date().toISOString()
     });
 
-    // 8. ElevenLabs
-    const elevenLabsConfigured = !!config.ELEVENLABS_API_KEY && !!config.ELEVENLABS_VOICE_ID;
-    let elevenLabsStatus: SponsorStatus = 'disabled';
-    if (config.ELEVENLABS_ENABLED) {
-      elevenLabsStatus = elevenLabsConfigured ? 'real' : 'error';
+    // 8. Cartesia
+    const cartesiaConfigured = !!config.CARTESIA_API_KEY && !!config.CARTESIA_VOICE_ID;
+    let cartesiaStatus: SponsorStatus = 'disabled';
+    if (config.CARTESIA_ENABLED) {
+      cartesiaStatus = cartesiaConfigured ? 'real' : 'error';
     }
     sponsors.push({
-      name: 'elevenlabs',
-      status: elevenLabsStatus,
-      configured: elevenLabsConfigured,
-      enabled: config.ELEVENLABS_ENABLED,
-      requiredEnvVars: ['ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID'],
+      name: 'cartesia',
+      status: cartesiaStatus,
+      configured: cartesiaConfigured,
+      enabled: config.CARTESIA_ENABLED,
+      requiredEnvVars: ['CARTESIA_API_KEY', 'CARTESIA_VOICE_ID'],
       missingEnvVars: [
-        ...(config.ELEVENLABS_API_KEY ? [] : ['ELEVENLABS_API_KEY']),
-        ...(config.ELEVENLABS_VOICE_ID ? [] : ['ELEVENLABS_VOICE_ID'])
+        ...(config.CARTESIA_API_KEY ? [] : ['CARTESIA_API_KEY']),
+        ...(config.CARTESIA_VOICE_ID ? [] : ['CARTESIA_VOICE_ID'])
       ],
-      productUse: 'Natural text-to-speech for tutor spoken explanations.',
-      dataSent: 'spokenText content sent for audio synthesis.',
-      privacyNotes: 'Transmitted securely to ElevenLabs API under their usage guidelines.',
+      productUse: 'Streaming Sonic text-to-speech and Ink speech-to-text over WebSocket.',
+      dataSent: 'spokenText for synthesis; push-to-talk microphone audio for transcription.',
+      privacyNotes: 'The renderer connects with short-lived access tokens; the API key stays on the orchestrator. Mic audio is only streamed while push-to-talk is held.',
       lastHealthCheckAt: new Date().toISOString()
     });
 

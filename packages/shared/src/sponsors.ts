@@ -9,7 +9,7 @@ export const SponsorName = z.enum([
   'fetch_agentverse',
   'arize',
   'sentry',
-  'elevenlabs'
+  'cartesia'
 ]);
 export type SponsorName = z.infer<typeof SponsorName>;
 

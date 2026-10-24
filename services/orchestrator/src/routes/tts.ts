@@ -4,35 +4,32 @@ import { config } from '../config.js';
 
 export const ttsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/api/tts/status', async () => {
-    const configured = !!(config.ELEVENLABS_API_KEY && config.ELEVENLABS_VOICE_ID);
+    const configured = !!(config.CARTESIA_API_KEY && config.CARTESIA_VOICE_ID);
     return {
-      enabled: config.ELEVENLABS_ENABLED && configured,
+      provider: 'cartesia',
+      enabled: config.CARTESIA_ENABLED && configured,
       configured,
     };
   });
 
-  fastify.post('/api/tts/speak', async (request, reply) => {
+  /**
+   * Short-lived Cartesia credentials for the renderer's direct TTS/STT WebSockets.
+   * The renderer calls this once per question (it is cached here until near expiry).
+   */
+  fastify.get('/api/voice/session', async (_request, reply) => {
     try {
-      const { text } = request.body as { text?: string };
-      if (!text?.trim()) {
-        return reply.status(400).send({ error: 'text is required' });
+      if (!config.CARTESIA_ENABLED) {
+        return reply.status(503).send({ error: 'Cartesia voice is disabled' });
       }
-
-      if (!config.ELEVENLABS_ENABLED) {
-        return reply.status(503).send({ error: 'ElevenLabs TTS is disabled' });
+      const cartesia = await fastify.getCartesia();
+      if (!cartesia.isConfigured()) {
+        return reply.status(503).send({ error: 'Cartesia voice is not configured' });
       }
-
-      const elevenlabs = await fastify.getElevenLabs();
-      if (!elevenlabs.isConfigured()) {
-        return reply.status(503).send({ error: 'ElevenLabs TTS is not configured' });
-      }
-
-      const audio = await elevenlabs.synthesizeSpeech(text);
-      return reply.header('Content-Type', 'audio/mpeg').send(audio);
+      return await cartesia.getVoiceSession();
     } catch (err: any) {
       fastify.log.error(err);
       const safeError = RedactionService.redactError(err);
-      return reply.status(500).send({ error: safeError.message || 'TTS failed' });
+      return reply.status(502).send({ error: safeError.message || 'Voice session failed' });
     }
   });
 };

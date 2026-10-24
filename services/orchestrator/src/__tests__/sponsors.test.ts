@@ -211,7 +211,7 @@ describe('SponsorRegistry Configurations', () => {
     const registry = new SponsorRegistry(memory);
     const status = await registry.getStatus();
 
-    const allowedSponsors = ['claude', 'gemini', 'redis', 'browserbase', 'simular', 'fetch_agentverse', 'arize', 'sentry', 'elevenlabs'];
+    const allowedSponsors = ['claude', 'gemini', 'redis', 'browserbase', 'simular', 'fetch_agentverse', 'arize', 'sentry', 'cartesia'];
     for (const item of status) {
       expect(allowedSponsors).toContain(item.name);
     }

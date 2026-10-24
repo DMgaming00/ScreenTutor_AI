@@ -1,4 +1,4 @@
-import { TutorInput, TutorResponse, SessionTurn, RedactionService } from '@screentutor/shared';
+import { TutorInput, TutorResponse, SessionTurn, LearnerProfile, RedactionService } from '@screentutor/shared';
 import type { AIProvider } from '../providers/ai-provider.js';
 import type { MemoryService } from '../memory/memory-service.js';
 import type { AgentRouter } from '../agents/agent-router.js';
@@ -17,6 +17,8 @@ import * as Sentry from '@sentry/node';
 
 export class TutorOrchestrator {
   private semanticCache: SemanticCache;
+  /** Background memory writes still in flight, per session (each resolves when settled). */
+  private pendingWrites = new Map<string, Promise<void>>();
 
   constructor(
     private aiProvider: AIProvider,
@@ -66,36 +68,26 @@ export class TutorOrchestrator {
           delete input.screenshotBase64;
         }
 
-        const screenSpan = Sentry.startInactiveSpan({ name: 'capture', op: 'screenshot' });
-        try {
-          this.observability.addSpan(traceId, 'ScreenCapture', {
-            screenshotPresent: !!input.screenshotBase64
-          });
-          this.observability.recordEvent(traceId, 'ScreenCaptureCompleted');
+        this.observability.addSpan(traceId, 'ScreenCapture', {
+          screenshotPresent: !!input.screenshotBase64
+        });
+        this.observability.recordEvent(traceId, 'ScreenCaptureCompleted');
 
-          // Simular accessibility tree — only if allowed
-          this.observability.addSpan(traceId, 'SimularContextFetch');
-          if (privacyGuard.isSimularAllowed(input)) {
-            try {
-              const tree = await this.simular.getAccessibilityTree();
-              input.accessibilityTree = tree;
-              this.observability.recordEvent(traceId, 'AccessibilityTreeFetched', {
-                nodesCount: tree?.nodes?.length || 0
-              });
-            } catch (err) {
-              console.error('Failed to fetch accessibility tree:', err);
-              this.observability.recordEvent(traceId, 'AccessibilityTreeFetchFailed');
-            }
-          } else {
-            this.observability.recordEvent(traceId, 'AccessibilityTreeSkipped', { reason: 'privacy' });
-          }
-        } finally {
-          screenSpan?.end();
-        }
-
-        // 3. MemoryFetch
+        // 2–3. Accessibility tree, learner profile and session history are independent
+        // reads — fetch them concurrently instead of one round trip after another.
+        this.observability.addSpan(traceId, 'SimularContextFetch');
         this.observability.addSpan(traceId, 'MemoryFetch');
-        let profile = await this.memory.getLearnerProfile(input.userId);
+        const contextSpan = Sentry.startInactiveSpan({ name: 'context-fetch', op: 'memory' });
+        const historyWanted = config.MEMORY_ENABLED;
+        // A follow-up asked before the previous turn's write landed must still see it.
+        await this.pendingWrites.get(input.sessionId);
+        const [, profile, prefetchedTurns] = await Promise.all([
+          this.fetchAccessibilityTree(input, traceId),
+          this.memory.getLearnerProfile(input.userId),
+          historyWanted
+            ? this.memory.getRecentTurns(input.sessionId, config.RECENT_TURNS_CONTEXT_LIMIT)
+            : Promise.resolve([] as SessionTurn[]),
+        ]).finally(() => contextSpan?.end());
         input.learnerMemory = {
           weakConcepts: profile.weakConcepts || [],
           strongConcepts: profile.strongConcepts || []
@@ -110,11 +102,8 @@ export class TutorOrchestrator {
         }
 
         // Session history: feed prior turns into the model for conversational continuity
-        if (config.MEMORY_ENABLED && profile.memoryEnabled !== false) {
-          const recentTurns = await this.memory.getRecentTurns(
-            input.sessionId,
-            config.RECENT_TURNS_CONTEXT_LIMIT
-          );
+        if (historyWanted && profile.memoryEnabled !== false) {
+          const recentTurns = prefetchedTurns;
           if (recentTurns.length > 0) {
             input.recentTurns = recentTurns;
           }
@@ -135,7 +124,7 @@ export class TutorOrchestrator {
           !input.privacyMode &&
           !(input.recentTurns && input.recentTurns.length > 0);
 
-        let response: TutorResponse;
+        let response!: TutorResponse; // assigned from the cache or the agent call below
         let fromCache = false;
 
         if (canUseSemanticCache) {
@@ -271,83 +260,21 @@ export class TutorOrchestrator {
                            && profile.memoryEnabled !== false;
 
         if (writeMemory) {
-          try {
-            const totalAsked = (profile.totalQuestionsAsked || 0) + 1;
-            const concept = response.concept || response.memoryUpdates?.detectedConcept;
-
-            if (concept) {
-              let confidenceUpdate = undefined;
-              let evidence = `AI detected concept: ${concept}`;
-
-              if (input.mode === 'hint') {
-                const existing = profile.weakConcepts.find(c => c.concept === concept);
-                const currentConf = existing ? existing.confidence : 0.5;
-                confidenceUpdate = Math.min(1.0, currentConf + 0.1);
-                evidence = 'User requested a hint on this concept';
-              } else if (
-                input.question.toLowerCase().includes("i don't understand") ||
-                input.question.toLowerCase().includes("i do not understand") ||
-                input.question.toLowerCase().includes("don't understand")
-              ) {
-                const existing = profile.weakConcepts.find(c => c.concept === concept);
-                const currentConf = existing ? existing.confidence : 0.5;
-                confidenceUpdate = Math.min(1.0, currentConf + 0.15);
-                evidence = 'User stated they do not understand the concept';
-              } else if (response.memoryUpdates?.isWeakConcept) {
-                evidence = 'AI flagged this as a weak concept';
+          // Memory is not needed to answer this turn, so it never delays the response.
+          const write = this.persistTurn(input, response, profile, screenshotHash, fromCache)
+            .then(() => this.observability.recordEvent(traceId, 'RedisMemoryUpdated'))
+            .catch((memErr) => {
+              Sentry.captureException(memErr);
+              console.error('Memory write failure:', memErr);
+            })
+            .finally(() => {
+              if (this.pendingWrites.get(input.sessionId) === write) {
+                this.pendingWrites.delete(input.sessionId);
               }
-
-              await this.memory.rememberWeakConcept(input.userId, concept, evidence, confidenceUpdate);
-            }
-
-            // Re-fetch profile to pick up updated weak concepts for recentQuestions list
-            profile = await this.memory.getLearnerProfile(input.userId);
-
-            profile.recentQuestions.unshift({
-              question: RedactionService.summarizeQuestion(input.question),
-              mode: input.mode,
-              detectedConcept: concept,
-              timestamp: new Date().toISOString()
             });
-            if (profile.recentQuestions.length > 10) {
-              profile.recentQuestions.pop();
-            }
-
-            await this.memory.updateLearnerProfile(input.userId, {
-              totalQuestionsAsked: totalAsked,
-              lastModeUsed: input.mode,
-              recentQuestions: profile.recentQuestions
-            });
-
-            // Compute screenshot hash if present
-            let turnScreenshotHash = screenshotHash;
-            if (!turnScreenshotHash && input.screenshotBase64) {
-              const crypto = await import('crypto');
-              turnScreenshotHash = crypto.createHash('md5').update(input.screenshotBase64).digest('hex');
-            }
-
-            // Append unified session turn
-            const turn: SessionTurn = {
-              sessionId: input.sessionId,
-              userId: input.userId,
-              timestamp: new Date().toISOString(),
-              mode: input.mode,
-              question: RedactionService.summarizeQuestion(input.question),
-              concept,
-              responseSummary: RedactionService.redactText(response.summary || ''),
-              hintLevel: input.mode === 'hint' ? (response.hints?.length || 0) : undefined,
-              quizOutcome: undefined,
-              pointTargetValid: !!(response.pointTarget && response.pointTarget.x !== null),
-              provider: fromCache ? `${response.provider || 'mock'}_cached` : (response.provider || 'mock'),
-              screenshotHash: turnScreenshotHash
-            };
-            await this.memory.appendSessionTurn(input.sessionId, turn);
-          } catch (memErr) {
-            Sentry.captureException(memErr);
-            console.error('Memory write failure:', memErr);
-          }
+          this.pendingWrites.set(input.sessionId, write);
+          this.observability.recordEvent(traceId, 'RedisMemoryUpdateQueued');
         }
-        this.observability.recordEvent(traceId, 'RedisMemoryUpdated');
 
         // 11. TutorResponseDelivered & Final Evaluations
         this.observability.addSpan(traceId, 'TutorResponseDelivered');
@@ -388,6 +315,102 @@ export class TutorOrchestrator {
         throw err;
       }
     });
+  }
+
+  /** Resolves once every background memory write has settled. */
+  async flushMemoryWrites(): Promise<void> {
+    await Promise.all(this.pendingWrites.values());
+  }
+
+  private async fetchAccessibilityTree(input: TutorInput, traceId: string): Promise<void> {
+    if (!privacyGuard.isSimularAllowed(input)) {
+      this.observability.recordEvent(traceId, 'AccessibilityTreeSkipped', { reason: 'privacy' });
+      return;
+    }
+    try {
+      const tree = await this.simular.getAccessibilityTree();
+      input.accessibilityTree = tree;
+      this.observability.recordEvent(traceId, 'AccessibilityTreeFetched', {
+        nodesCount: tree?.nodes?.length || 0
+      });
+    } catch (err) {
+      console.error('Failed to fetch accessibility tree:', err);
+      this.observability.recordEvent(traceId, 'AccessibilityTreeFetchFailed');
+    }
+  }
+
+  /** Learner-profile and session-turn writes for one answered question. */
+  private async persistTurn(
+    input: TutorInput,
+    response: TutorResponse,
+    profile: LearnerProfile,
+    screenshotHash: string | undefined,
+    fromCache: boolean
+  ): Promise<void> {
+    // Snapshot everything from the response now: the caller keeps using that object.
+    const concept = response.concept || response.memoryUpdates?.detectedConcept;
+    const totalAsked = (profile.totalQuestionsAsked || 0) + 1;
+    const turn: SessionTurn = {
+      sessionId: input.sessionId,
+      userId: input.userId,
+      timestamp: new Date().toISOString(),
+      mode: input.mode,
+      question: RedactionService.summarizeQuestion(input.question),
+      concept,
+      responseSummary: RedactionService.redactText(response.summary || ''),
+      hintLevel: input.mode === 'hint' ? (response.hints?.length || 0) : undefined,
+      quizOutcome: undefined,
+      pointTargetValid: !!(response.pointTarget && response.pointTarget.x !== null),
+      provider: fromCache ? `${response.provider || 'mock'}_cached` : (response.provider || 'mock'),
+      screenshotHash
+    };
+
+    if (concept) {
+      let confidenceUpdate = undefined;
+      let evidence = `AI detected concept: ${concept}`;
+      const questionLower = input.question.toLowerCase();
+
+      if (input.mode === 'hint') {
+        const existing = profile.weakConcepts.find(c => c.concept === concept);
+        const currentConf = existing ? existing.confidence : 0.5;
+        confidenceUpdate = Math.min(1.0, currentConf + 0.1);
+        evidence = 'User requested a hint on this concept';
+      } else if (
+        questionLower.includes("i don't understand") ||
+        questionLower.includes("i do not understand") ||
+        questionLower.includes("don't understand")
+      ) {
+        const existing = profile.weakConcepts.find(c => c.concept === concept);
+        const currentConf = existing ? existing.confidence : 0.5;
+        confidenceUpdate = Math.min(1.0, currentConf + 0.15);
+        evidence = 'User stated they do not understand the concept';
+      } else if (response.memoryUpdates?.isWeakConcept) {
+        evidence = 'AI flagged this as a weak concept';
+      }
+
+      await this.memory.rememberWeakConcept(input.userId, concept, evidence, confidenceUpdate);
+    }
+
+    // Re-fetch profile to pick up updated weak concepts for recentQuestions list
+    const updated = await this.memory.getLearnerProfile(input.userId);
+    const recentQuestions = [
+      {
+        question: turn.question,
+        mode: input.mode,
+        detectedConcept: concept,
+        timestamp: turn.timestamp
+      },
+      ...updated.recentQuestions,
+    ].slice(0, 10);
+
+    await Promise.all([
+      this.memory.updateLearnerProfile(input.userId, {
+        totalQuestionsAsked: totalAsked,
+        lastModeUsed: input.mode,
+        recentQuestions
+      }),
+      this.memory.appendSessionTurn(input.sessionId, turn),
+    ]);
   }
 
   private buildPrivacyBlockedResponse(input: TutorInput, reason: string): TutorResponse {

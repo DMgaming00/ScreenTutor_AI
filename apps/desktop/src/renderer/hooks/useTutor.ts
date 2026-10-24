@@ -32,6 +32,8 @@ export function useTutor() {
     setPrivacyBlockedReason(null);
     setResponse(null);
     ttsProvider.stop();
+    // Open the voice socket while the model is thinking, not after it answers.
+    ttsProvider.warm?.();
 
     try {
       const privacyMode = await window.electronAPI.getPrivacyMode();

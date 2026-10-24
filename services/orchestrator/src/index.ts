@@ -7,7 +7,7 @@ import { config } from './config.js';
 import type { AIProvider } from './providers/ai-provider.js';
 import type { BrowserbaseIntegration } from './integrations/browserbase.js';
 import type { SimularIntegration } from './integrations/simular.js';
-import type { ElevenLabsIntegration } from './integrations/elevenlabs.js';
+import type { CartesiaIntegration } from './integrations/cartesia.js';
 import type { ObservabilityService } from './observability/observability-service.js';
 import type { TutorOrchestrator } from './orchestrator/tutor-orchestrator.js';
 import * as Sentry from '@sentry/node';
@@ -34,7 +34,7 @@ declare module 'fastify' {
     getMemory(): Promise<any>;
     getBrowserbase(): Promise<BrowserbaseIntegration>;
     getSimular(): Promise<SimularIntegration>;
-    getElevenLabs(): Promise<ElevenLabsIntegration>;
+    getCartesia(): Promise<CartesiaIntegration>;
     getObservability(): Promise<ObservabilityService>;
   }
 }
@@ -85,15 +85,22 @@ async function getSimular(): Promise<SimularIntegration> {
   return simularInstance;
 }
 
-let elevenLabsInstance: ElevenLabsIntegration | null = null;
-async function getElevenLabs(): Promise<ElevenLabsIntegration> {
-  if (!elevenLabsInstance) {
-    const { ElevenLabsService, MockElevenLabsService } = await import('./integrations/elevenlabs.js');
-    elevenLabsInstance = (config.ELEVENLABS_ENABLED && config.ELEVENLABS_API_KEY && config.ELEVENLABS_VOICE_ID)
-      ? new ElevenLabsService(config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID, config.ELEVENLABS_MODEL_ID)
-      : new MockElevenLabsService();
+let cartesiaInstance: CartesiaIntegration | null = null;
+async function getCartesia(): Promise<CartesiaIntegration> {
+  if (!cartesiaInstance) {
+    const { CartesiaService, MockCartesiaService } = await import('./integrations/cartesia.js');
+    cartesiaInstance = (config.CARTESIA_ENABLED && config.CARTESIA_API_KEY && config.CARTESIA_VOICE_ID)
+      ? new CartesiaService({
+          apiKey: config.CARTESIA_API_KEY,
+          voiceId: config.CARTESIA_VOICE_ID,
+          ttsModel: config.CARTESIA_TTS_MODEL,
+          sttModel: config.CARTESIA_STT_MODEL,
+          version: config.CARTESIA_VERSION,
+          tokenTtlSeconds: config.CARTESIA_TOKEN_TTL_SECONDS,
+        })
+      : new MockCartesiaService();
   }
-  return elevenLabsInstance;
+  return cartesiaInstance;
 }
 
 let observabilityInstance: ObservabilityService | null = null;
@@ -129,7 +136,7 @@ fastify.decorate('getOrchestrator', getOrchestrator);
 fastify.decorate('getMemory', getMemory);
 fastify.decorate('getBrowserbase', getBrowserbase);
 fastify.decorate('getSimular', getSimular);
-fastify.decorate('getElevenLabs', getElevenLabs);
+fastify.decorate('getCartesia', getCartesia);
 fastify.decorate('getObservability', getObservability);
 
 import { RedactionService } from '@screentutor/shared';
@@ -165,7 +172,7 @@ const start = async () => {
     console.log(`AI Provider: ${config.ANTHROPIC_API_KEY ? 'claude' : 'none'}`);
     console.log(`Browserbase Configured: ${!!config.BROWSERBASE_API_KEY}`);
     console.log(`Simular Configured: ${!!config.SIMULAR_API_KEY} (Safe Actions: ${config.ENABLE_SAFE_ACTIONS})`);
-    console.log(`ElevenLabs Configured: ${!!config.ELEVENLABS_API_KEY && !!config.ELEVENLABS_VOICE_ID} (Enabled: ${config.ELEVENLABS_ENABLED})`);
+    console.log(`Cartesia Configured: ${!!config.CARTESIA_API_KEY && !!config.CARTESIA_VOICE_ID} (Enabled: ${config.CARTESIA_ENABLED})`);
   } catch (err) {
     Sentry.captureException(err);
     fastify.log.error(err);

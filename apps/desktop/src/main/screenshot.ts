@@ -1,4 +1,4 @@
-import { desktopCapturer, screen } from 'electron';
+import { desktopCapturer, screen, type NativeImage } from 'electron';
 import { createHash } from 'crypto';
 import { isWindowDenied } from './privacy.js';
 import * as Sentry from '@sentry/node';
@@ -150,8 +150,9 @@ async function captureScreenInternal(regionDip: DipRect | null): Promise<Capture
       lastCaptureRegion = null;
     }
 
+    outputImage = fitForModel(outputImage);
     const size = outputImage.getSize();
-    const base64 = outputImage.toDataURL();
+    const base64 = `data:image/jpeg;base64,${outputImage.toJPEG(SCREENSHOT_JPEG_QUALITY).toString('base64')}`;
 
     logScreenshotMetadata(base64, size.width, size.height);
 
@@ -178,6 +179,26 @@ async function captureScreenInternal(regionDip: DipRect | null): Promise<Capture
     console.error('Failed to capture screen:', err);
     throw err;
   }
+}
+
+/**
+ * Long-edge cap for images sent to the model. Native HiDPI captures (e.g. 2880x1800)
+ * are multi-MB PNGs; ~1080p-class JPEG keeps pointing accuracy while cutting upload
+ * size and image tokens. Tags are normalized 0–1, so overlay math is unaffected.
+ */
+export const SCREENSHOT_MAX_LONG_EDGE = 1920;
+export const SCREENSHOT_JPEG_QUALITY = 85;
+
+export function fitForModel(image: NativeImage, maxLongEdge = SCREENSHOT_MAX_LONG_EDGE): NativeImage {
+  const { width, height } = image.getSize();
+  const longEdge = Math.max(width, height);
+  if (longEdge <= maxLongEdge) return image;
+  const scale = maxLongEdge / longEdge;
+  return image.resize({
+    width: Math.round(width * scale),
+    height: Math.round(height * scale),
+    quality: 'better',
+  });
 }
 
 export function logScreenshotMetadata(base64: string, width: number, height: number): void {

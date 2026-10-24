@@ -3,7 +3,29 @@ import { TutorInput, TutorResponse, prepareOverlayText, stripForTts } from '@scr
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { buildUserPrompt, TUTOR_SYSTEM_PROMPT } from '../prompts/tutor-system-prompt.js';
-import { buildCoordinateGuide } from '@screentutor/shared';
+import { JsonStringFieldStreamer } from './json-field-stream.js';
+
+/**
+ * Structured-output schema for every tutor turn. Property order matters:
+ * `spokenText` is generated first so it can stream to the client early.
+ */
+export const TUTOR_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    spokenText: { type: 'string' },
+    visualText: { type: 'string' },
+    summary: { type: 'string' },
+    concept: { type: 'string' },
+    confidence: { type: 'number' },
+  },
+  required: ['spokenText', 'visualText', 'summary', 'concept', 'confidence'],
+  additionalProperties: false,
+} as const;
+
+/** Server-side refusal fallback, routed by refusal category. */
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
+type MediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 
 export class ClaudeProvider implements AIProvider {
   readonly name = 'claude';
@@ -33,132 +55,52 @@ export class ClaudeProvider implements AIProvider {
       researchContext: input.researchContext,
     });
 
-    const base64Data = input.screenshotBase64?.split(',')[1] || '';
-    const mediaType = input.screenshotBase64?.split(';')[0].split(':')[1] || 'image/png';
-
-    const content: Anthropic.MessageParam['content'] = [];
-    if (base64Data) {
+    const content: Anthropic.ContentBlockParam[] = [];
+    const image = parseDataUrl(input.screenshotBase64);
+    if (image) {
       content.push({
         type: 'image',
-        source: {
-          type: 'base64',
-          media_type: mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
-          data: base64Data,
-        },
+        source: { type: 'base64', media_type: image.mediaType, data: image.data },
       });
     }
     content.push({ type: 'text', text: promptText });
 
     try {
-      let textResponse = '';
-      const selectedPrompt = systemPromptOverride
-        ? `${TUTOR_SYSTEM_PROMPT}\n\n${systemPromptOverride}`
-        : TUTOR_SYSTEM_PROMPT;
+      const stream = this.anthropic.beta.messages.stream({
+        model: config.CLAUDE_MODEL,
+        max_tokens: config.CLAUDE_MAX_TOKENS,
+        system: buildSystemBlocks(systemPromptOverride),
+        messages: [{ role: 'user', content }],
+        output_config: {
+          effort: config.CLAUDE_EFFORT,
+          format: { type: 'json_schema', schema: TUTOR_OUTPUT_SCHEMA },
+        },
+        betas: [FALLBACK_BETA],
+        // SDK types only model the array form; "default" picks the fallback per refusal category.
+        fallbacks: 'default' as unknown as Anthropic.Beta.Messages.BetaFallbackParam[],
+      });
 
       if (onDelta) {
-        const stream = this.anthropic.messages.stream({
-          model: config.CLAUDE_MODEL,
-          max_tokens: 8000,
-          system: selectedPrompt,
-          messages: [{ role: 'user', content }],
-        });
-
-        let isAccumulatingSpoken = false;
-        let hasSpokenKeyBeenFound = false;
-
-        stream.on('text', (textDelta) => {
-          textResponse += textDelta;
-
-          if (!hasSpokenKeyBeenFound) {
-            const keyIndex = textResponse.indexOf('"spokenText"');
-            if (keyIndex !== -1) {
-              const colonIndex = textResponse.indexOf(':', keyIndex);
-              const firstQuoteIndex = colonIndex !== -1 ? textResponse.indexOf('"', colonIndex) : -1;
-              if (firstQuoteIndex !== -1) {
-                hasSpokenKeyBeenFound = true;
-                const valStart = firstQuoteIndex + 1;
-                if (textResponse.length > valStart) {
-                  const initialText = textResponse.substring(valStart);
-                  isAccumulatingSpoken = true;
-                  for (let i = 0; i < initialText.length; i++) {
-                    const char = initialText[i];
-                    if (char === '"' && (i === 0 || initialText[i - 1] !== '\\')) {
-                      isAccumulatingSpoken = false;
-                      break;
-                    }
-                    onDelta(char);
-                  }
-                } else {
-                  isAccumulatingSpoken = true;
-                }
-              }
-            }
-          } else if (isAccumulatingSpoken) {
-            for (let i = 0; i < textDelta.length; i++) {
-              const char = textDelta[i];
-              const absIdx = textResponse.length - textDelta.length + i - 1;
-              if (char === '"' && textResponse[absIdx] !== '\\') {
-                isAccumulatingSpoken = false;
-                break;
-              }
-              onDelta(char);
-            }
-          }
-        });
-
-        const finalMessage = await stream.finalMessage();
-        textResponse = finalMessage.content?.[0]?.type === 'text' ? finalMessage.content[0].text : '';
-      } else {
-        const response = await this.anthropic.messages.create({
-          model: config.CLAUDE_MODEL,
-          max_tokens: 8000,
-          system: selectedPrompt,
-          messages: [{ role: 'user', content }],
-        });
-        textResponse = response.content?.[0]?.type === 'text' ? response.content[0].text : '';
+        const spoken = new JsonStringFieldStreamer('spokenText', onDelta);
+        stream.on('text', (textDelta) => spoken.push(textDelta));
       }
 
-      const jsonStart = textResponse.indexOf('{');
-      if (jsonStart === -1) {
-        throw new Error(`Failed to find JSON block in Claude response: ${textResponse}`);
+      const finalMessage = await stream.finalMessage();
+      logUsage(finalMessage.usage);
+
+      if (finalMessage.stop_reason === 'refusal') {
+        throw new Error('Claude declined to answer this request.');
+      }
+      if (finalMessage.stop_reason === 'max_tokens') {
+        throw new Error(`Claude response hit max_tokens (${config.CLAUDE_MAX_TOKENS}) before finishing.`);
       }
 
-      let braceCount = 0;
-      let inString = false;
-      let escapeNext = false;
-      let jsonEnd = -1;
+      const textResponse = finalMessage.content
+        .filter((block): block is Anthropic.Beta.Messages.BetaTextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('');
 
-      for (let i = jsonStart; i < textResponse.length; i++) {
-        const char = textResponse[i];
-        if (escapeNext) {
-          escapeNext = false;
-          continue;
-        }
-        if (char === '\\') {
-          escapeNext = true;
-          continue;
-        }
-        if (char === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (!inString) {
-          if (char === '{') braceCount++;
-          else if (char === '}') {
-            braceCount--;
-            if (braceCount === 0) {
-              jsonEnd = i;
-              break;
-            }
-          }
-        }
-      }
-
-      if (jsonEnd === -1) {
-        jsonEnd = textResponse.lastIndexOf('}');
-      }
-
-      const parsed = JSON.parse(textResponse.substring(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(textResponse);
 
       const rawSpoken = parsed.spokenText || '';
       const rawVisual = parsed.visualText || '';
@@ -197,4 +139,32 @@ export class ClaudeProvider implements AIProvider {
       throw error;
     }
   }
+}
+
+/**
+ * Base prompt and per-agent override as separate blocks, each a cache breakpoint:
+ * the base prefix is shared by every agent, the override is stable per agent.
+ * Nothing volatile (question, screenshot, memory) goes in the system prompt.
+ */
+export function buildSystemBlocks(systemPromptOverride?: string): Anthropic.Beta.Messages.BetaTextBlockParam[] {
+  const blocks: Anthropic.Beta.Messages.BetaTextBlockParam[] = [
+    { type: 'text', text: TUTOR_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+  ];
+  if (systemPromptOverride) {
+    blocks.push({ type: 'text', text: systemPromptOverride, cache_control: { type: 'ephemeral' } });
+  }
+  return blocks;
+}
+
+export function parseDataUrl(dataUrl?: string): { mediaType: MediaType; data: string } | null {
+  const match = dataUrl ? /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/s.exec(dataUrl) : null;
+  if (!match) return null;
+  return { mediaType: match[1] as MediaType, data: match[2] };
+}
+
+function logUsage(usage: Anthropic.Beta.Messages.BetaUsage): void {
+  console.log(
+    `[Tutor] tokens in=${usage.input_tokens} cache_read=${usage.cache_read_input_tokens ?? 0} ` +
+      `cache_write=${usage.cache_creation_input_tokens ?? 0} out=${usage.output_tokens}`
+  );
 }

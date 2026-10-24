@@ -68,9 +68,17 @@ MEMORY_ENABLED=true
 ### 3. Claude (Anthropic AI)
 For real-time multi-modal screen capture analysis and chat responses.
 ```env
-AI_PROVIDER=claude
 ANTHROPIC_API_KEY=sk-ant-your-key-here
-CLAUDE_MODEL=claude-3-5-sonnet-20241022
+CLAUDE_MODEL=claude-opus-5-5   # default
+CLAUDE_EFFORT=low              # raise to medium/high for harder diagrams
+```
+Responses use structured outputs (JSON schema), the system prompt is prompt-cached, and refusals fall back server-side.
+
+### Cartesia (Voice)
+Streaming Sonic text-to-speech and Ink speech-to-text. The orchestrator only mints short-lived access tokens; the desktop app streams audio directly to/from Cartesia. Falls back to the system voice and browser speech recognition when unset.
+```env
+CARTESIA_API_KEY=sk_car_your-key
+CARTESIA_VOICE_ID=your-voice-id
 ```
 
 ### 4. Browserbase (Research Mode)

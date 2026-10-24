@@ -12,7 +12,10 @@ export const config = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
-  CLAUDE_MODEL: process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022',
+  CLAUDE_MODEL: process.env.CLAUDE_MODEL || 'claude-opus-5-5',
+  /** low keeps first-token latency down for interactive tutoring; raise for harder diagrams */
+  CLAUDE_EFFORT: (process.env.CLAUDE_EFFORT || 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+  CLAUDE_MAX_TOKENS: parseInt(process.env.CLAUDE_MAX_TOKENS || '16000', 10),
 
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   MEMORY_ENABLED: process.env.MEMORY_ENABLED !== 'false',
@@ -41,10 +44,13 @@ export const config = {
   SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT || 'development',
   SENTRY_ENABLED: process.env.SENTRY_ENABLED === 'true',
 
-  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
-  ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || '',
-  ELEVENLABS_MODEL_ID: process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5',
-  ELEVENLABS_ENABLED: process.env.ELEVENLABS_ENABLED !== 'false',
+  CARTESIA_API_KEY: process.env.CARTESIA_API_KEY || '',
+  CARTESIA_VOICE_ID: process.env.CARTESIA_VOICE_ID || '',
+  CARTESIA_TTS_MODEL: process.env.CARTESIA_TTS_MODEL || 'sonic-3.6',
+  CARTESIA_STT_MODEL: process.env.CARTESIA_STT_MODEL || 'ink-2',
+  CARTESIA_VERSION: process.env.CARTESIA_VERSION || '2026-08-14',
+  CARTESIA_TOKEN_TTL_SECONDS: parseInt(process.env.CARTESIA_TOKEN_TTL_SECONDS || '300', 10),
+  CARTESIA_ENABLED: process.env.CARTESIA_ENABLED !== 'false',
 
   SCREENSHOT_STORAGE: process.env.SCREENSHOT_STORAGE || 'none',
   PRIVACY_MODE_DEFAULT: process.env.PRIVACY_MODE_DEFAULT === 'true',
